@@ -72,31 +72,45 @@ if [[ -z "$EXISTING_ROLE" ]]; then
   done
 fi
 
-echo "Configuring federated credential for repo:$REPO:environment:$ENVIRONMENT..."
-CREDENTIAL_NAME="github-$ENVIRONMENT"
+# GitHub issues OIDC subjects either in the classic form (repo:owner/name:...)
+# or, for newer repositories, with immutable IDs (repo:owner@id/name@id:...).
+# Register both so the trust works whichever form this repository uses.
+read -r GH_OWNER GH_OWNER_ID GH_NAME GH_REPO_ID < <(gh api "repos/$REPO" \
+  --jq '[.owner.login, (.owner.id|tostring), .name, (.id|tostring)] | join(" ")')
+[[ -n "${GH_REPO_ID:-}" ]] || { echo "Could not read repository details for $REPO" >&2; exit 1; }
+
 CREDENTIAL_FILE="$(mktemp)"
 trap 'rm -f "$CREDENTIAL_FILE"' EXIT
-cat > "$CREDENTIAL_FILE" <<JSON
+
+configure_credential() {
+  local name="$1" subject="$2" existing=""
+  echo "Configuring federated credential $name for $subject..."
+  cat > "$CREDENTIAL_FILE" <<JSON
 {
-  "name": "$CREDENTIAL_NAME",
+  "name": "$name",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:$REPO:environment:$ENVIRONMENT",
+  "subject": "$subject",
   "description": "MonoBank GitHub Actions $ENVIRONMENT environment",
   "audiences": ["api://AzureADTokenExchange"]
 }
 JSON
-EXISTING_CREDENTIAL=""
-list_credential() {
-  EXISTING_CREDENTIAL="$(az ad app federated-credential list --id "$APP_OBJECT_ID" \
-    --query "[?name=='$CREDENTIAL_NAME'].name | [0]" -o tsv)"
+  list_credential() {
+    existing="$(az ad app federated-credential list --id "$APP_OBJECT_ID" \
+      --query "[?name=='$name'].name | [0]" -o tsv)"
+  }
+  retry list_credential
+  if [[ -n "$existing" ]]; then
+    az ad app federated-credential delete --id "$APP_OBJECT_ID" \
+      --federated-credential-id "$name" --output none
+  fi
+  retry az ad app federated-credential create --id "$APP_OBJECT_ID" \
+    --parameters "@$CREDENTIAL_FILE" --output none
 }
-retry list_credential
-if [[ -n "$EXISTING_CREDENTIAL" ]]; then
-  az ad app federated-credential delete --id "$APP_OBJECT_ID" \
-    --federated-credential-id "$CREDENTIAL_NAME" --output none
-fi
-retry az ad app federated-credential create --id "$APP_OBJECT_ID" \
-  --parameters "@$CREDENTIAL_FILE" --output none
+
+configure_credential "github-$ENVIRONMENT" \
+  "repo:$GH_OWNER/$GH_NAME:environment:$ENVIRONMENT"
+configure_credential "github-$ENVIRONMENT-ids" \
+  "repo:$GH_OWNER@$GH_OWNER_ID/$GH_NAME@$GH_REPO_ID:environment:$ENVIRONMENT"
 
 echo "Writing repository secrets and environment..."
 gh api --method PUT "repos/$REPO/environments/$ENVIRONMENT" --silent
