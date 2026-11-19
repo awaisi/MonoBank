@@ -44,7 +44,7 @@ Because Azure App Service can restart during deployments, platform maintenance, 
 
 - **Hosting:** Linux Azure App Service running Node.js 22
 - **Infrastructure:** subscription-scoped Bicep in `infra/`
-- **Delivery:** GitHub Actions with Microsoft Entra workload identity federation (OIDC); no publish profile or long-lived Azure password
+- **Delivery:** GitHub Actions (`.github/workflows/azure-deploy.yml`) with Microsoft Entra workload identity federation (OIDC); no publish profile or long-lived Azure password
 - **Validation:** syntax checks, Node test suite, deployment, then `/health` verification
 - **Default SKU:** B1 Basic with Always On. This creates billable Azure resources; change `skuName` in `infra/main.bicep` if another supported tier is preferred.
 
