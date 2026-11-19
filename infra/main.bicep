@@ -15,8 +15,8 @@ param baseName string = 'monobank'
   'S1'
   'P0v3'
 ])
-@description('Linux App Service Plan SKU. B1 is the economical always-on default; F1 is free (no Always On, 60 CPU-minutes/day).')
-param skuName string = 'B1'
+@description('Linux App Service Plan SKU. F1 (default) is free: no Always On, 60 CPU-minutes/day. B1 is the economical always-on tier.')
+param skuName string = 'F1'
 
 var suffix = uniqueString(subscription().id, environmentName, baseName)
 var resourceGroupName = 'rg-${baseName}-${environmentName}'

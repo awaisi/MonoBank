@@ -16,7 +16,7 @@ concurrency:
 env:
   # Set repository variables AZURE_LOCATION / AZURE_APP_SKU to override.
   AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus2' }}
-  AZURE_APP_SKU: ${{ vars.AZURE_APP_SKU || 'B1' }}
+  AZURE_APP_SKU: ${{ vars.AZURE_APP_SKU || 'F1' }}
 
 jobs:
   build:

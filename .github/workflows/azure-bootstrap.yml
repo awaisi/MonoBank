@@ -25,7 +25,7 @@ on:
         type: string
         default: ''
       sku:
-        description: App Service plan SKU (repo-default = repository variable AZURE_APP_SKU, else B1)
+        description: App Service plan SKU (repo-default = repository variable AZURE_APP_SKU, else F1)
         type: choice
         options: [repo-default, F1, B1, S1, P0v3]
         default: repo-default
@@ -80,7 +80,7 @@ jobs:
         if: ${{ inputs.provision_infra }}
         env:
           LOCATION: ${{ inputs.location || vars.AZURE_LOCATION || 'westus2' }}
-          SKU: ${{ (inputs.sku != 'repo-default' && inputs.sku) || vars.AZURE_APP_SKU || 'B1' }}
+          SKU: ${{ (inputs.sku != 'repo-default' && inputs.sku) || vars.AZURE_APP_SKU || 'F1' }}
         run: |
           echo "Provisioning in $LOCATION with SKU $SKU"
           az deployment sub create \
