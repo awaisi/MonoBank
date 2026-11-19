@@ -35,13 +35,18 @@ retry() {
 }
 
 echo "Creating or reusing Microsoft Entra application $DISPLAY_NAME..."
-read -r CLIENT_ID APP_OBJECT_ID < <(az ad app list --display-name "$DISPLAY_NAME" \
-  --query "[0].[appId, id]" -o tsv) || true
-if [[ -z "${CLIENT_ID:-}" ]]; then
-  read -r CLIENT_ID APP_OBJECT_ID < <(az ad app create --display-name "$DISPLAY_NAME" \
-    --query "[appId, id]" -o tsv)
+# Values of a JMESPath list come back one per line with -o tsv; normalise tabs too.
+ids() { tr '\t' '\n'; }
+APP_IDS=()
+mapfile -t APP_IDS < <(az ad app list --display-name "$DISPLAY_NAME" \
+  --query "[0].[appId, id]" -o tsv | ids)
+if [[ -z "${APP_IDS[0]:-}" ]]; then
+  mapfile -t APP_IDS < <(az ad app create --display-name "$DISPLAY_NAME" \
+    --query "[appId, id]" -o tsv | ids)
 fi
-[[ -n "${CLIENT_ID:-}" && -n "${APP_OBJECT_ID:-}" ]] || { echo "Could not create application" >&2; exit 1; }
+CLIENT_ID="${APP_IDS[0]:-}"
+APP_OBJECT_ID="${APP_IDS[1]:-}"
+[[ -n "${CLIENT_ID:-}" && -n "${APP_OBJECT_ID:-}" ]] || { echo "Could not find or create application $DISPLAY_NAME" >&2; exit 1; }
 echo "Application: client $CLIENT_ID, object $APP_OBJECT_ID"
 
 SP_OBJECT_ID="$(az ad sp list --filter "appId eq '$CLIENT_ID'" --query "[0].id" -o tsv)"
