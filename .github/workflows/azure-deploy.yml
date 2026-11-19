@@ -19,7 +19,20 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      azure_configured: ${{ steps.gate.outputs.configured }}
     steps:
+      - name: Check Azure deployment secrets
+        id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AZURE_CLIENT_ID is not set; deployment will be skipped. Run the 'Bootstrap Azure (one-time)' workflow first."
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -38,6 +51,7 @@ jobs:
 
   deploy:
     needs: build
+    if: needs.build.outputs.azure_configured == 'true'
     runs-on: ubuntu-latest
     environment:
       name: production

@@ -1,0 +1,88 @@
+name: Bootstrap Azure (one-time)
+
+# Creates the OIDC deployment identity used by azure-deploy.yml, writes the
+# AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID secrets, and
+# optionally provisions the Bicep infrastructure. Run manually from the
+# Actions tab. Safe to re-run.
+#
+# Required repository secrets (see README "One-time Azure/GitHub trust setup"):
+#   BOOTSTRAP_AZURE_CLIENT_ID      bootstrap service principal app (client) ID
+#   BOOTSTRAP_AZURE_CLIENT_SECRET  bootstrap service principal client secret
+#   BOOTSTRAP_AZURE_TENANT_ID      Microsoft Entra tenant ID
+#   BOOTSTRAP_AZURE_SUBSCRIPTION_ID target subscription ID
+#   BOOTSTRAP_GH_TOKEN             fine-grained PAT for this repo with
+#                                  Secrets, Environments and Administration: read & write
+
+on:
+  workflow_dispatch:
+    inputs:
+      provision_infra:
+        description: Also deploy infra/main.bicep (resource group + App Service)
+        type: boolean
+        default: true
+      location:
+        description: Azure region
+        type: string
+        default: westus2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check bootstrap secrets
+        env:
+          C: ${{ secrets.BOOTSTRAP_AZURE_CLIENT_ID }}
+          S: ${{ secrets.BOOTSTRAP_AZURE_CLIENT_SECRET }}
+          T: ${{ secrets.BOOTSTRAP_AZURE_TENANT_ID }}
+          SUB: ${{ secrets.BOOTSTRAP_AZURE_SUBSCRIPTION_ID }}
+          G: ${{ secrets.BOOTSTRAP_GH_TOKEN }}
+        run: |
+          missing=0
+          for n in C:BOOTSTRAP_AZURE_CLIENT_ID S:BOOTSTRAP_AZURE_CLIENT_SECRET \
+                   T:BOOTSTRAP_AZURE_TENANT_ID SUB:BOOTSTRAP_AZURE_SUBSCRIPTION_ID \
+                   G:BOOTSTRAP_GH_TOKEN; do
+            var="${n%%:*}"; name="${n#*:}"
+            if [ -z "${!var}" ]; then echo "::error::Missing repository secret $name"; missing=1; fi
+          done
+          exit $missing
+
+      - name: Azure login (bootstrap identity)
+        env:
+          C: ${{ secrets.BOOTSTRAP_AZURE_CLIENT_ID }}
+          S: ${{ secrets.BOOTSTRAP_AZURE_CLIENT_SECRET }}
+          T: ${{ secrets.BOOTSTRAP_AZURE_TENANT_ID }}
+          SUB: ${{ secrets.BOOTSTRAP_AZURE_SUBSCRIPTION_ID }}
+        run: |
+          az login --service-principal --username "$C" --password "$S" --tenant "$T" --output none
+          az account set --subscription "$SUB"
+
+      - name: Create OIDC deployment identity and repository secrets
+        env:
+          GH_TOKEN: ${{ secrets.BOOTSTRAP_GH_TOKEN }}
+          SUB: ${{ secrets.BOOTSTRAP_AZURE_SUBSCRIPTION_ID }}
+        run: infra/bootstrap-azure.sh "$GITHUB_REPOSITORY" "$SUB"
+
+      - name: Provision infrastructure (Bicep)
+        if: ${{ inputs.provision_infra }}
+        env:
+          LOCATION: ${{ inputs.location }}
+        run: |
+          az deployment sub create \
+            --name "monobank-bootstrap-${GITHUB_RUN_ID}" \
+            --location "$LOCATION" \
+            --template-file infra/main.bicep \
+            --parameters location="$LOCATION" \
+            --query properties.outputs -o table
+
+      - name: Sign out
+        if: always()
+        run: az logout || true

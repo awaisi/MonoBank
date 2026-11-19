@@ -50,19 +50,45 @@ Because Azure App Service can restart during deployments, platform maintenance, 
 
 ### One-time Azure/GitHub trust setup
 
-The workflow expects these GitHub repository secrets:
+The deploy workflow signs in to Azure with OIDC using three repository secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. Until they exist, pushes to `main` build and test but skip deployment. Create them with **either** option below.
 
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_SUBSCRIPTION_ID`
+#### Option A: GitHub Actions bootstrap workflow (no local tools)
 
-On a trusted Windows workstation with Azure CLI and GitHub CLI installed and authenticated, run:
+1. **Create a bootstrap service principal** in the Azure portal: *Microsoft Entra ID → App registrations → New registration* (e.g. `monobank-bootstrap`), then *Certificates & secrets → New client secret*.
+2. **Grant it rights:**
+   - On the subscription (*Subscriptions → Access control (IAM)*): **Owner**, or **Contributor** + **Role Based Access Control Administrator**. It needs to assign roles and deploy resources.
+   - In Microsoft Graph (*API permissions → Add → Microsoft Graph → Application permissions*): **Application.ReadWrite.OwnedBy**, then **Grant admin consent**. If your tenant blocks that, assign the Entra role **Cloud Application Administrator** instead.
+3. **Create a fine-grained GitHub personal access token** limited to this repository, with repository permissions **Secrets**, **Environments** and **Administration** set to *Read and write*.
+4. **Add repository secrets** (*Settings → Secrets and variables → Actions*):
 
-```powershell
-./infra/bootstrap-azure.ps1 -GitHubOwner YOUR_GITHUB_USER -Repository MonoBank -SubscriptionId YOUR_SUBSCRIPTION_ID
+   | Secret | Value |
+   | --- | --- |
+   | `BOOTSTRAP_AZURE_CLIENT_ID` | Bootstrap app's Application (client) ID |
+   | `BOOTSTRAP_AZURE_CLIENT_SECRET` | Bootstrap client secret value |
+   | `BOOTSTRAP_AZURE_TENANT_ID` | Directory (tenant) ID |
+   | `BOOTSTRAP_AZURE_SUBSCRIPTION_ID` | Target subscription ID |
+   | `BOOTSTRAP_GH_TOKEN` | The personal access token |
+
+5. Run **Actions → Bootstrap Azure (one-time) → Run workflow**. It creates the `monobank-github-<owner>` deployment identity (Contributor on the subscription, OIDC trust limited to this repository's `production` environment), writes the three `AZURE_*` secrets, creates the `production` environment, and, by default, provisions `infra/main.bicep`.
+6. Push to `main` or run the deploy workflow to ship the app.
+
+Once it succeeds, **delete the bootstrap client secret and the `BOOTSTRAP_*` secrets/PAT**. Day-to-day deployments use only the passwordless OIDC identity. The workflow is idempotent if you need to re-run it later.
+
+#### Option B: run the script from a workstation
+
+With Azure CLI and GitHub CLI installed and signed in (`az login`, `gh auth login`):
+
+```bash
+./infra/bootstrap-azure.sh awaisi/MonoBank <subscription-id>
 ```
 
-The script creates/reuses a Microsoft Entra application and service principal, grants it Contributor at the selected subscription, adds a federated credential restricted to the repository's `production` environment, and writes the three repository secrets. You need permission to create app registrations, role assignments, repository secrets, and environments.
+or, in PowerShell:
+
+```powershell
+./infra/bootstrap-azure.ps1 -GitHubOwner awaisi -Repository MonoBank -SubscriptionId <subscription-id>
+```
+
+You need permission to create app registrations, role assignments, repository secrets, and environments.
 
 For tighter least privilege, run the first deployment with Contributor at subscription scope, then replace it with a custom role restricted to the generated resource group while retaining permission to execute subscription-scope deployments.
 
