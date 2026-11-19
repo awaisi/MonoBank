@@ -1,0 +1,7 @@
+.git
+.github
+infra
+test
+node_modules
+*.md
+Dockerfile

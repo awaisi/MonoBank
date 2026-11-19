@@ -36,18 +36,18 @@ npm run dev
 
 ## How sessions work
 
-A game is held only in the Node.js process memory and receives a random 16-character URL identifier. Anyone with that URL can make changes. Restarting or replacing the App Service process removes all games; inactive games are removed after 24 hours. This is intentional for the current no-authentication, no-database release.
+A game is held only in the Node.js process memory and receives a random 16-character URL identifier. Anyone with that URL can make changes. Restarting or replacing the container removes all games; inactive games are removed after 24 hours. This is intentional for the current no-authentication, no-database release.
 
-Because Azure App Service can restart during deployments, platform maintenance, or scaling, do not treat this version as durable storage. A future persistence layer should use Azure Cosmos DB, Table Storage, or another shared store before scaling beyond one instance.
+Because Azure Container Apps restarts the container during deployments and platform maintenance, do not treat this version as durable storage. A future persistence layer should use Azure Cosmos DB, Table Storage, or another shared store before scaling beyond one instance.
 
 ## Azure architecture
 
-- **Hosting:** Linux Azure App Service running Node.js 22
+- **Hosting:** Azure Container Apps (Consumption) running the `Dockerfile` image (Node.js 22 on Alpine). Exactly **one always-on replica** (0.25 vCPU, 0.5 GiB), because games live in process memory. Images are stored in Azure Container Registry (Basic); logs go to a Log Analytics workspace (30-day retention, 1 GB/day cap).
 - **Infrastructure:** subscription-scoped Bicep in `infra/`
 - **Delivery:** GitHub Actions (`.github/workflows/azure-deploy.yml`) with Microsoft Entra workload identity federation (OIDC); no publish profile or long-lived Azure password
 - **Validation:** syntax checks, Node test suite, deployment, then `/health` verification
-- **Default SKU:** F1 (Free) in `westus2`. F1 has no Always On and a 60 CPU-minute daily limit, so the app sleeps when idle and in-memory games are lost more often; set `AZURE_APP_SKU` to `B1` for an always-on (billable) plan. To change region or tier without editing code, set repository variables (*Settings → Secrets and variables → Actions → Variables*) `AZURE_LOCATION` (e.g. `eastus`) and `AZURE_APP_SKU` (`F1`, `B1`, `S1` or `P0v3`).
-- **Quota:** new and trial subscriptions often have 0 App Service quota for some tiers/regions (`SubscriptionIsOverQuotaForSku`). Request more at *Quotas → App Service* in the portal, or pick another region or SKU. If you change `AZURE_LOCATION` after `rg-monobank-prod` was already created in another region, delete that resource group first.
+- **Cost:** billable. The always-on replica uses more than the Container Apps monthly free grant, and Azure Container Registry Basic is billed daily; expect a few dollars to roughly $15 a month in total. Check the Azure pricing calculator for your region. Region defaults to `westus2`; override it with the repository variable `AZURE_LOCATION` (*Settings → Secrets and variables → Actions → Variables*).
+- **Why not App Service:** new and trial subscriptions often have 0 App Service quota (`SubscriptionIsOverQuotaForSku`); Container Apps uses separate quota. If you change `AZURE_LOCATION` after `rg-monobank-prod` exists in another region, delete that resource group first.
 
 ### One-time Azure/GitHub trust setup
 
@@ -70,7 +70,7 @@ The deploy workflow signs in to Azure with OIDC using three repository secrets: 
    | `BOOTSTRAP_AZURE_SUBSCRIPTION_ID` | Target subscription ID |
    | `BOOTSTRAP_GH_TOKEN` | The personal access token |
 
-5. Run **Actions → Bootstrap Azure (one-time) → Run workflow**. It creates the `monobank-github-<owner>` deployment identity (Contributor on the subscription, OIDC trust limited to this repository's `production` environment), writes the three `AZURE_*` secrets, creates the `production` environment, and, by default, provisions `infra/main.bicep`.
+5. Run **Actions → Bootstrap Azure (one-time) → Run workflow**. It creates the `monobank-github-<owner>` deployment identity (Contributor on the subscription, OIDC trust limited to this repository's `production` environment), writes the three `AZURE_*` secrets, creates the `production` environment, and, by default, provisions the shared infrastructure from `infra/main.bicep`. The app itself is deployed by the deploy workflow.
 6. Push to `main` or run the deploy workflow to ship the app.
 
 Once it succeeds, **delete the bootstrap client secret and the `BOOTSTRAP_*` secrets/PAT**. Day-to-day deployments use only the passwordless OIDC identity. The workflow is idempotent if you need to re-run it later.
@@ -100,8 +100,8 @@ Every push to `main`:
 1. Checks out the repository and uses Node.js 22.
 2. Runs syntax checks and all tests.
 3. Signs into Azure with OIDC.
-4. deploys `infra/main.bicep` idempotently.
-5. Packages and ZIP-deploys the app.
+4. Deploys the shared infrastructure in `infra/main.bicep` (resource group, registry, Log Analytics, Container Apps environment) idempotently.
+5. Builds the container image, pushes it to the registry tagged with the commit SHA, and deploys the container app with that image.
 6. Polls the public `/health` endpoint and fails if the app does not become healthy.
 
 The workflow can also be run manually from **Actions → Build, test, and deploy to Azure**.
@@ -111,7 +111,7 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 - `POST /api/games` — create a game
 - `GET /api/games/:id` — read current game state
 - `POST /api/games/:id/actions` — perform a transfer, buy, rent, mortgage, building, or trade action
-- `GET /health` — App Service health probe and deployment verification
+- `GET /health` — container liveness/readiness probe and deployment verification
 
 The client sends an expected revision with each action. A stale browser receives HTTP 409 and refreshes instead of silently overwriting a newer transaction.
 

@@ -14,9 +14,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Set repository variables AZURE_LOCATION / AZURE_APP_SKU to override.
+  # Set the repository variable AZURE_LOCATION to override the region.
   AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus2' }}
-  AZURE_APP_SKU: ${{ vars.AZURE_APP_SKU || 'F1' }}
 
 jobs:
   build:
@@ -43,13 +42,8 @@ jobs:
         run: npm run check
       - name: Test
         run: npm test
-      - name: Package app
-        run: zip -r app.zip server.mjs package.json package-lock.json lib public
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app
-          path: app.zip
-          retention-days: 7
+      - name: Build container image
+        run: docker build -t monobank:ci .
 
   deploy:
     needs: build
@@ -57,12 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: ${{ steps.infra.outputs.webAppUrl }}
+      url: ${{ steps.app.outputs.webAppUrl }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: app
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -71,33 +62,56 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy infrastructure (Bicep)
+      - name: Register resource providers
+        run: |
+          for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.OperationalInsights; do
+            az provider register --namespace "$ns" --wait
+          done
+
+      - name: Deploy shared infrastructure (Bicep)
         id: infra
         run: |
           set -euo pipefail
           out=$(az deployment sub create \
-            --name "monobank-${GITHUB_RUN_ID}" \
+            --name "monobank-infra-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --location "$AZURE_LOCATION" \
             --template-file infra/main.bicep \
-            --parameters location="$AZURE_LOCATION" skuName="$AZURE_APP_SKU" \
+            --parameters location="$AZURE_LOCATION" deployApp=false \
             --query properties.outputs -o json)
-          echo "resourceGroupName=$(jq -r .resourceGroupName.value <<<"$out")" >> "$GITHUB_OUTPUT"
-          echo "webAppName=$(jq -r .webAppName.value <<<"$out")" >> "$GITHUB_OUTPUT"
-          echo "webAppUrl=$(jq -r .webAppUrl.value <<<"$out")" >> "$GITHUB_OUTPUT"
+          echo "registryName=$(jq -r .registryName.value <<<"$out")" >> "$GITHUB_OUTPUT"
+          echo "registryLoginServer=$(jq -r .registryLoginServer.value <<<"$out")" >> "$GITHUB_OUTPUT"
 
-      - name: ZIP deploy app
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.infra.outputs.registryLoginServer }}
         run: |
-          az webapp deploy \
-            --resource-group "${{ steps.infra.outputs.resourceGroupName }}" \
-            --name "${{ steps.infra.outputs.webAppName }}" \
-            --src-path app.zip \
-            --type zip \
-            --clean true \
-            --restart true
+          set -euo pipefail
+          az acr login --name "${{ steps.infra.outputs.registryName }}"
+          image="$REGISTRY/monobank:${GITHUB_SHA}"
+          docker build -t "$image" .
+          docker push "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy container app (Bicep)
+        id: app
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          out=$(az deployment sub create \
+            --name "monobank-app-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --location "$AZURE_LOCATION" \
+            --template-file infra/main.bicep \
+            --parameters location="$AZURE_LOCATION" deployApp=true containerImage="$IMAGE" \
+            --query properties.outputs -o json)
+          url=$(jq -r .webAppUrl.value <<<"$out")
+          echo "webAppUrl=$url" >> "$GITHUB_OUTPUT"
+          echo "### MonoBank deployed: $url" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify /health
         run: |
-          url="${{ steps.infra.outputs.webAppUrl }}/health"
+          url="${{ steps.app.outputs.webAppUrl }}/health"
           for i in $(seq 1 30); do
             if curl -fsS --max-time 10 "$url"; then
               echo; echo "Healthy: $url"; exit 0
