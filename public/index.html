@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e2c24">
+  <meta name="description" content="A shared tabletop banking companion for game night.">
+  <title>MonoBank — Tabletop Banker</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="MonoBank home">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span><strong>MONOBANK</strong><small>TABLESIDE BANKER</small></span>
+      </a>
+      <div class="session-badge" id="session-badge" hidden><span class="live-dot"></span><span>GAME LIVE</span></div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section id="setup-screen" class="setup-layout">
+        <div class="hero-panel">
+          <div class="eyebrow"><span></span> THE BANK IS OPEN</div>
+          <h1>Your game.<br><em>One shared bank.</em></h1>
+          <p>Replace paper cash with a fast, shared companion built for the table—not the spreadsheet.</p>
+          <div class="feature-strip" aria-label="Features">
+            <span>⚡ Instant transfers</span><span>⌂ Deed manager</span><span>↗ Shareable game link</span>
+          </div>
+          <div class="table-art" aria-hidden="true">
+            <div class="board-card card-a"><span></span><b>BOARDWALK</b><small>$400</small></div>
+            <div class="board-card card-b"><span></span><b>ILLINOIS AVE.</b><small>$240</small></div>
+            <div class="token-art">M</div>
+            <div class="dice-art">••<br>• •</div>
+          </div>
+        </div>
+
+        <div class="setup-card">
+          <div class="step-chip">NEW GAME</div>
+          <h2>Who’s at the table?</h2>
+          <p class="muted">Add 2–4 players. Everyone starts with the same balance.</p>
+          <form id="setup-form" novalidate>
+            <div id="player-inputs" class="player-inputs"></div>
+            <button type="button" class="text-button" id="add-player">＋ Add another player</button>
+            <label class="field money-field"><span>Starting balance</span><div><span aria-hidden="true">$</span><input id="starting-balance" name="startingBalance" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="1500" required></div></label>
+            <p class="form-error" id="setup-error" role="alert"></p>
+            <button class="primary-button full" type="submit"><span>OPEN THE BANK</span><span aria-hidden="true">→</span></button>
+          </form>
+          <p class="fine-print">No sign-in. Your game stays in server memory for 24 hours after its last activity.</p>
+        </div>
+      </section>
+
+      <section id="game-screen" class="game-layout" hidden>
+        <div class="game-head">
+          <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1></div>
+          <button class="share-button" id="share-game" type="button">↗ <span>Share game</span></button>
+        </div>
+
+        <section class="balance-ribbon" aria-labelledby="players-title">
+          <div class="section-label"><h2 id="players-title">Players</h2><span id="total-cash"></span></div>
+          <div id="player-cards" class="player-cards"></div>
+        </section>
+
+        <div class="desktop-grid">
+          <section class="console-panel">
+            <nav class="view-tabs" aria-label="Bank console">
+              <button data-view="pay" class="active" aria-selected="true">Quick pay</button>
+              <button data-view="deeds" aria-selected="false">Deeds</button>
+              <button data-view="trade" aria-selected="false">Trade</button>
+              <button data-view="ledger" aria-selected="false">Activity</button>
+            </nav>
+
+            <div id="pay-view" class="console-view">
+              <div class="view-heading"><div><p class="kicker">MOVE MONEY</p><h2>Make a payment</h2></div><div class="bank-seal">MB</div></div>
+              <form id="payment-form" class="action-form">
+                <div class="account-row">
+                  <label class="field"><span>From</span><select id="payment-from" required></select></label>
+                  <button type="button" id="swap-payment" class="swap-button" aria-label="Swap accounts">⇄</button>
+                  <label class="field"><span>To</span><select id="payment-to" required></select></label>
+                </div>
+                <div class="preset-row" aria-label="Common payments">
+                  <button type="button" data-preset="200" data-note="Passed GO">GO +$200</button>
+                  <button type="button" data-preset="50" data-note="Jail fee">Jail $50</button>
+                  <button type="button" data-preset="200" data-note="Income Tax">Tax $200</button>
+                  <button type="button" data-preset="100" data-note="Luxury Tax">Luxury $100</button>
+                </div>
+                <label class="field big-money"><span>Amount</span><div><span>$</span><input id="payment-amount" type="number" inputmode="numeric" min="1" step="1" placeholder="0" required></div></label>
+                <label class="field"><span>Note <small>optional</small></span><input id="payment-note" maxlength="120" placeholder="Rent, card, side deal…"></label>
+                <button class="primary-button full" type="submit"><span>TRANSFER FUNDS</span><span aria-hidden="true">→</span></button>
+              </form>
+            </div>
+
+            <div id="deeds-view" class="console-view" hidden>
+              <div class="view-heading"><div><p class="kicker">PROPERTY DESK</p><h2>Manage the board</h2></div><div class="bank-seal">⌂</div></div>
+              <div class="filters"><label><span class="sr-only">Search deeds</span><input id="deed-search" type="search" placeholder="Search a deed…"></label><select id="deed-filter" aria-label="Filter deeds"><option value="all">All deeds</option><option value="available">Available</option><option value="owned">Owned</option><option value="mortgaged">Mortgaged</option></select></div>
+              <div id="deed-grid" class="deed-grid"></div>
+            </div>
+
+            <div id="trade-view" class="console-view" hidden>
+              <div class="view-heading"><div><p class="kicker">DEAL ROOM</p><h2>Build a trade</h2></div><div class="bank-seal">⇄</div></div>
+              <form id="trade-form" class="action-form">
+                <div class="account-row">
+                  <label class="field"><span>Player one</span><select id="trade-first" required></select></label>
+                  <span class="trade-arrow" aria-hidden="true">↔</span>
+                  <label class="field"><span>Player two</span><select id="trade-second" required></select></label>
+                </div>
+                <div class="trade-columns">
+                  <fieldset><legend id="first-offer-label">Player one offers</legend><label class="field"><span>Cash</span><input id="trade-first-cash" type="number" min="0" step="1" value="0"></label><div id="trade-first-deeds" class="check-list"></div></fieldset>
+                  <fieldset><legend id="second-offer-label">Player two offers</legend><label class="field"><span>Cash</span><input id="trade-second-cash" type="number" min="0" step="1" value="0"></label><div id="trade-second-deeds" class="check-list"></div></fieldset>
+                </div>
+                <button class="primary-button full" type="submit"><span>COMPLETE TRADE</span><span aria-hidden="true">→</span></button>
+              </form>
+            </div>
+
+            <div id="ledger-view" class="console-view" hidden>
+              <div class="view-heading"><div><p class="kicker">BANK RECORD</p><h2>Activity</h2></div><div class="bank-seal">≡</div></div>
+              <div id="full-ledger" class="ledger-list"></div>
+            </div>
+          </section>
+
+          <aside class="activity-panel">
+            <div class="section-label"><h2>Latest activity</h2><button type="button" data-open-view="ledger">View all</button></div>
+            <div id="mini-ledger" class="ledger-list compact"></div>
+            <div class="session-card"><span class="live-dot"></span><div><strong>Shared session</strong><small>Anyone with this game link can bank.</small></div></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <nav id="mobile-nav" class="mobile-nav" aria-label="Game navigation" hidden>
+      <button data-mobile-view="pay" class="active"><span>↔</span>Pay</button>
+      <button data-mobile-view="deeds"><span>⌂</span>Deeds</button>
+      <button data-mobile-view="trade"><span>⇄</span>Trade</button>
+      <button data-mobile-view="ledger"><span>≡</span>Activity</button>
+    </nav>
+  </div>
+
+  <dialog id="deed-dialog" class="deed-dialog"><div id="deed-dialog-content"></div></dialog>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

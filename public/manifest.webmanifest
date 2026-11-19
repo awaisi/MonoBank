@@ -1,0 +1,12 @@
+{
+  "name": "MonoBank — Tabletop Banker",
+  "short_name": "MonoBank",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071a16",
+  "theme_color": "#0e2c24",
+  "description": "A shared tabletop banking companion for your property trading game.",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

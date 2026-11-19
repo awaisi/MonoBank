@@ -1,0 +1,16 @@
+{
+  "name": "monobank",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A mobile-first tabletop banking companion for classic property trading games.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check lib/game.mjs && node --check public/app.js"
+  }
+}
