@@ -1,0 +1,106 @@
+name: Build, test, and deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: azure-production
+  cancel-in-progress: false
+
+env:
+  AZURE_LOCATION: westus2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      azure_configured: ${{ steps.gate.outputs.configured }}
+    steps:
+      - name: Check Azure deployment secrets
+        id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AZURE_CLIENT_ID is not set; deployment will be skipped. Run the 'Bootstrap Azure (one-time)' workflow first."
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: npm run check
+      - name: Test
+        run: npm test
+      - name: Package app
+        run: zip -r app.zip server.mjs package.json package-lock.json lib public
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: app.zip
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.azure_configured == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.infra.outputs.webAppUrl }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: app
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy infrastructure (Bicep)
+        id: infra
+        run: |
+          set -euo pipefail
+          out=$(az deployment sub create \
+            --name "monobank-${GITHUB_RUN_ID}" \
+            --location "$AZURE_LOCATION" \
+            --template-file infra/main.bicep \
+            --parameters location="$AZURE_LOCATION" \
+            --query properties.outputs -o json)
+          echo "resourceGroupName=$(jq -r .resourceGroupName.value <<<"$out")" >> "$GITHUB_OUTPUT"
+          echo "webAppName=$(jq -r .webAppName.value <<<"$out")" >> "$GITHUB_OUTPUT"
+          echo "webAppUrl=$(jq -r .webAppUrl.value <<<"$out")" >> "$GITHUB_OUTPUT"
+
+      - name: ZIP deploy app
+        run: |
+          az webapp deploy \
+            --resource-group "${{ steps.infra.outputs.resourceGroupName }}" \
+            --name "${{ steps.infra.outputs.webAppName }}" \
+            --src-path app.zip \
+            --type zip \
+            --clean true \
+            --restart true
+
+      - name: Verify /health
+        run: |
+          url="${{ steps.infra.outputs.webAppUrl }}/health"
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$url"; then
+              echo; echo "Healthy: $url"; exit 0
+            fi
+            echo "Attempt $i: not healthy yet"; sleep 10
+          done
+          echo "App did not become healthy at $url" >&2
+          exit 1
