@@ -46,7 +46,8 @@ Because Azure App Service can restart during deployments, platform maintenance, 
 - **Infrastructure:** subscription-scoped Bicep in `infra/`
 - **Delivery:** GitHub Actions (`.github/workflows/azure-deploy.yml`) with Microsoft Entra workload identity federation (OIDC); no publish profile or long-lived Azure password
 - **Validation:** syntax checks, Node test suite, deployment, then `/health` verification
-- **Default SKU:** B1 Basic with Always On. This creates billable Azure resources; change `skuName` in `infra/main.bicep` if another supported tier is preferred.
+- **Default SKU:** B1 Basic with Always On in `westus2`. This creates billable Azure resources. To change region or tier without editing code, set repository variables (*Settings → Secrets and variables → Actions → Variables*) `AZURE_LOCATION` (e.g. `eastus`) and `AZURE_APP_SKU` (`F1`, `B1`, `S1` or `P0v3`). `F1` is free but has no Always On and a daily CPU limit, so the app sleeps when idle and in-memory games are lost more often.
+- **Quota:** new and trial subscriptions often have 0 App Service quota for some tiers/regions (`SubscriptionIsOverQuotaForSku`). Request more at *Quotas → App Service* in the portal, or pick another region or SKU. If you change `AZURE_LOCATION` after `rg-monobank-prod` was already created in another region, delete that resource group first.
 
 ### One-time Azure/GitHub trust setup
 

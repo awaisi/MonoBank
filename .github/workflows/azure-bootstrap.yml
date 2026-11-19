@@ -21,9 +21,14 @@ on:
         type: boolean
         default: true
       location:
-        description: Azure region
+        description: Azure region (blank = repository variable AZURE_LOCATION, else westus2)
         type: string
-        default: westus2
+        default: ''
+      sku:
+        description: App Service plan SKU (repo-default = repository variable AZURE_APP_SKU, else B1)
+        type: choice
+        options: [repo-default, F1, B1, S1, P0v3]
+        default: repo-default
 
 permissions:
   contents: read
@@ -74,13 +79,15 @@ jobs:
       - name: Provision infrastructure (Bicep)
         if: ${{ inputs.provision_infra }}
         env:
-          LOCATION: ${{ inputs.location }}
+          LOCATION: ${{ inputs.location || vars.AZURE_LOCATION || 'westus2' }}
+          SKU: ${{ (inputs.sku != 'repo-default' && inputs.sku) || vars.AZURE_APP_SKU || 'B1' }}
         run: |
+          echo "Provisioning in $LOCATION with SKU $SKU"
           az deployment sub create \
             --name "monobank-bootstrap-${GITHUB_RUN_ID}" \
             --location "$LOCATION" \
             --template-file infra/main.bicep \
-            --parameters location="$LOCATION" \
+            --parameters location="$LOCATION" skuName="$SKU" \
             --query properties.outputs -o table
 
       - name: Sign out

@@ -10,11 +10,12 @@ param location string = 'westus2'
 param baseName string = 'monobank'
 
 @allowed([
+  'F1'
   'B1'
   'S1'
   'P0v3'
 ])
-@description('Linux App Service Plan SKU. B1 is the economical always-on default.')
+@description('Linux App Service Plan SKU. B1 is the economical always-on default; F1 is free (no Always On, 60 CPU-minutes/day).')
 param skuName string = 'B1'
 
 var suffix = uniqueString(subscription().id, environmentName, baseName)

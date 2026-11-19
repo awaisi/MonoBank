@@ -3,7 +3,9 @@ param webAppName string
 param planName string
 param skuName string
 
-var skuTier = skuName == 'B1' ? 'Basic' : skuName == 'S1' ? 'Standard' : 'PremiumV3'
+var skuTier = skuName == 'F1' ? 'Free' : skuName == 'B1' ? 'Basic' : skuName == 'S1' ? 'Standard' : 'PremiumV3'
+// Always On is not available on the Free tier.
+var alwaysOn = skuName != 'F1'
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
@@ -33,7 +35,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
     publicNetworkAccess: 'Enabled'
     siteConfig: {
       linuxFxVersion: 'NODE|22-lts'
-      alwaysOn: true
+      alwaysOn: alwaysOn
       http20Enabled: true
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
