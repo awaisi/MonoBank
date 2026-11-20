@@ -576,8 +576,10 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(await viewer.$$eval('#full-ledger .ledger-item', (rows) => rows.length), total - 2, 'paging reaches the start, beyond what the server sends up front');
     assert.match(await viewer.textContent('#full-ledger .ledger-item:last-child'), /Bank opened/);
     // Type chips and search combine.
-    await viewer.click('[data-ledger-type="rent"]');
-    assert.equal(await viewer.getAttribute('[data-ledger-type="rent"]', 'aria-pressed'), 'true');
+    // Wide screens: the search box is always in the toolbar; the type filter is a picker.
+    assert.equal(await viewer.isVisible('#ledger-search'), true);
+    assert.equal(await viewer.isVisible('#ledger-search-toggle'), false);
+    await viewer.selectOption('#ledger-type', 'rent');
     const rentRows = await viewer.$$eval('#full-ledger .ledger-item small', (rows) => rows.map((row) => row.textContent));
     assert.ok(rentRows.length === 45 && rentRows.every((row) => row.startsWith('Rent')), rentRows.length);
     await viewer.fill('#ledger-search', 'boardwalk');
@@ -586,7 +588,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await viewer.fill('#ledger-search', 'no such deed');
     assert.equal(await viewer.textContent('#full-ledger .empty-state'), 'No moves match.');
     await viewer.fill('#ledger-search', '');
-    await viewer.click('[data-ledger-type="all"]');
+    await viewer.selectOption('#ledger-type', 'all');
     // Player view: signed amounts, balance after each move, and that player's totals.
     await viewer.selectOption('#ledger-filter', { label: 'Cy' });
     assert.match(await viewer.textContent('#side-summary'), /Cy’s game.*Money in\+\$[\d,]+.*Money out−\$[\d,]+.*Rent paid\$[\d,]+.*Passed GO15×/);
@@ -605,6 +607,25 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     // Phone: the summary sits above the list (no sidebar) and nothing scrolls sideways.
     await viewer.setViewportSize({ width: 375, height: 740 });
     assert.equal(await viewer.isVisible('#ledger-summary'), true);
+    // Phones: no title row, one toolbar row, search on demand, and the summary collapsed to one line.
+    assert.equal(await viewer.isVisible('#ledger-view .view-heading'), false);
+    assert.equal(await viewer.isVisible('.ledger-toolbar [data-undo]'), true, 'Undo moves into the toolbar');
+    assert.equal(await viewer.isVisible('#ledger-search'), false);
+    assert.match(await viewer.textContent('#ledger-summary summary'), /^Game so far182 moves · \$[\d,]+ moved$/);
+    assert.equal(await viewer.isVisible('#ledger-summary .summary-facts'), false);
+    const listTop = await viewer.$eval('#full-ledger', (list) => list.getBoundingClientRect().top - document.querySelector('#ledger-view').getBoundingClientRect().top);
+    assert.ok(listTop < 160, `the list starts close to the top of the Activity tab (${listTop}px)`);
+    await viewer.click('#ledger-summary summary');
+    assert.equal(await viewer.isVisible('#ledger-summary .summary-facts'), true);
+    await viewer.click('#ledger-search-toggle');
+    assert.equal(await viewer.getAttribute('#ledger-search-toggle', 'aria-expanded'), 'true');
+    assert.equal(await viewer.evaluate(() => document.activeElement.id), 'ledger-search');
+    await viewer.fill('#ledger-search', 'boardwalk');
+    assert.ok((await viewer.$$eval('#full-ledger .ledger-item', (rows) => rows.map((row) => row.textContent))).every((row) => row.includes('Boardwalk')));
+    assert.equal(await viewer.isVisible('#ledger-summary .summary-facts'), true, 'the summary stays open while the list re-renders');
+    await viewer.click('#ledger-search-toggle');
+    assert.equal(await viewer.inputValue('#ledger-search'), '', 'closing search clears it');
+    assert.equal(await viewer.isVisible('#ledger-search'), false);
     assert.equal(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(viewerErrors, []);
     await viewer.close();
