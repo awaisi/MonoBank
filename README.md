@@ -19,7 +19,8 @@ Live at **https://monobank.divviq.app**.
 - **Bankruptcy**: hand a player's cash and deeds to their creditor or the Bank; the last player standing wins.
 - **Net worth** in each player's sheet, and an **End game** results screen with final standings.
 - **No overdrafts:** a player can't spend more than they have. MonoBank shows how much is missing and offers to mortgage deeds or sell buildings first, or to declare bankruptcy.
-- **One players bar:** a single compact row of every player's balance stays pinned under the header on every tab. Tap a player for their sheet (net worth, deeds, quick actions). On **Deeds** the same bar filters deeds by owner.
+- **One players bar:** a single compact row of every player's balance stays pinned under the header on every tab. Tap a player for their sheet (net worth, deeds, one-tap quick actions). On **Deeds** the same bar filters deeds by owner.
+- **Per-player quick actions:** Passed GO, Income Tax, Luxury Tax, Jail fee or any amount to or from the Bank, in one tap from the player's sheet.
 - **Activity filter:** show one player's (or the Bank's) transactions.
 - **QR code** to join a game from another phone.
 - **Live on every phone:** payments appear on every device the moment they happen (server-sent events, with polling as a fallback).
@@ -64,7 +65,7 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ```bash
 npm test           # 116 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # 30 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run e2e        # 31 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available.
@@ -80,7 +81,8 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 ## Joining and feedback
 
 - **Players bar:** one row of chips (token, name, balance; plus the Free Parking pot when that rule is on) sits pinned under the header on every tab and scrolls sideways with many players. It replaces the old player cards, balance strip and owner pills, so the console starts right below it.
-- **Player sheet:** tap a chip to see that player's cash, net worth and how much they could raise, the net-worth breakdown and their deeds, with shortcuts: **Show deeds**, **Pay from …**, **This is me**, and **Send to jail / Release** when the no-rent-in-jail rule is on. Tap the Free Parking chip to pay out the pot.
+- **Player sheet:** tap a chip to see that player's cash, net worth and how much they could raise, the net-worth breakdown and their deeds, with shortcuts: **Show deeds**, **Pay from …**, **This is me**, and **Send to jail / Release** when the no-rent-in-jail rule is on.
+- **Quick actions:** the sheet also has one-tap **Passed GO +$200** (and **Landed on GO +$400** with that house rule), **Income Tax −$200**, **Luxury Tax −$100** and **Jail fee −$50**, plus an *Other amount* box with **+ From Bank** / **− To Bank** for card effects. Taxes and the jail fee go to the Free Parking pot when the jackpot rule is on. Each is an ordinary transfer: it shows in the activity feed, can be undone, and opens Raise cash if the player is short. The sheet stays open, so you can do several in a row. Tap the Free Parking chip to pay out the pot.
 - **Your name first:** once a phone has picked its player, that player comes first in the players bar, every player list and the activity filter.
 - **Paying rent:** open an owned deed, choose **Who pays rent?** and tap **Pay rent to Ana**. The owner is never offered as the payer.
 - **Filter deeds by owner:** on **Deeds**, the players bar turns into an owner filter: tap **All**, a player (with their deed count) or **Bank** to see only those deeds. It combines with the search box and the status filter (available, owned, mortgaged).

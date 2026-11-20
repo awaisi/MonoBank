@@ -26,6 +26,7 @@ Priorities:
 | **No negative balances + Raise cash dialog** | PR #11 | Every debit checks the payer's cash; shortfall, raisable amount, Sell/Mortgage buttons and a bankruptcy shortcut. Hotels can't be bought on credit. |
 | **Net worth as equity** | PR #11 | Mortgaged deeds net of payoff, buildings at resale; reversible moves net to zero (was purchase price, which hid resale losses and interest). |
 | **Balance strip, activity filter, deed owner pills, Pay rent wording, your name first** | PR #11 | Balances pinned on every tab; Activity filter by player or Bank; Deeds owner pills with counts; "Who pays rent? → Pay rent to …"; this phone's player first in all lists. |
+| **Per-player quick actions** (#10) | PR #13 | Player sheet: Passed GO, Landed on GO (house rule), Income Tax, Luxury Tax, Jail fee, and any amount to/from the Bank, as ordinary undoable transfers; taxes and fees feed the Free Parking pot when that rule is on. |
 | **One players bar + player sheet (space-efficient redesign)** | PR #12 | Player cards, balance strip and Deeds owner pills merged into one sticky players bar (owner filter on Deeds); tap a player for a sheet with net worth, deeds and shortcuts; compact headings, one-row phone head, two-column deeds on small phones. |
 | **5–8 players** (#11) | PR #10 | Up to 8 players with distinct colors and generic tokens; denser player grid and two-column identity picker for big tables; setup shows "N of 8 players". |
 | **"This phone is me" mode** (#13) | PR #9 | Per-device player or banker choice (localStorage); me-bar, You badge, pre-filled forms, My deeds filter, Switch player. |
@@ -49,7 +50,6 @@ All P0 items have shipped (#1 and #3 in PR #7). New P0s go here.
 | 6 | **Collect from / pay every player** | Card effects like birthdays and "chairman" cards take N transfers today. | S | New action that records one ledger entry with per-player detail; skips bankrupt players; undoable. |
 | 7 | **Card helpers** | General repairs ($ per house/hotel), double railroad rent, 10× utility from a card. | S | Repairs computed from the player's buildings; rent modifiers as options on the rent action. |
 | 9 | **Mortgaged-deed transfer interest** | Official rule: receiving a mortgaged deed costs 10% right away (or the full unmortgage cost). | S | Apply in trades and bankruptcy-to-player; respect the mortgage-interest house rule; prompt for "pay interest now" vs "unmortgage now". |
-| 10 | **Per-player quick actions** | Tap a player for "Passed GO", "Pay tax" and so on. Saves two dropdowns on every turn. | S | Add to the player sheet (it already has Pay from and jail); uses the existing transfer action. |
 
 ### P2: multi-device and social
 

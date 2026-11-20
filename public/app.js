@@ -418,14 +418,27 @@ function refreshSheet() {
     const tags = [deed.buildings === 5 ? 'Hotel' : deed.buildings ? `${deed.buildings} house${deed.buildings === 1 ? '' : 's'}` : '', deed.mortgaged ? 'Mortgaged' : ''].filter(Boolean).join(' · ');
     return `<li data-vars="--deed-color=${GROUP_COLORS[property.group]}"><span>${escapeHtml(property.name)}</span><small>${tags}</small></li>`;
   }).join('');
+  // Quick actions: the common Bank payments for this player, sent as ordinary transfers.
+  const quick = canAct && !player.bankrupt ? `<div class="sheet-quick"><h3 class="sheet-heading">Quick actions</h3><div class="quick-row" role="group" aria-label="Quick actions for ${escapeHtml(player.name)}">${quickActions().map((item) => `<button type="button" class="${item.in ? 'in' : 'out'}" data-quick="${item.key}">${item.label}</button>`).join('')}</div><form class="quick-custom" id="quick-custom"><label class="sr-only" for="quick-amount">Other amount</label><span aria-hidden="true">$</span><input id="quick-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="Other amount"><button type="submit" class="in" data-direction="in">+ From Bank</button><button type="submit" class="out" data-direction="out">− To Bank</button></form></div>` : '';
   const actions = [
     deeds.length ? '<button type="button" class="secondary" data-sheet="deeds">Show deeds</button>' : '',
     canAct && !player.bankrupt ? `<button type="button" class="secondary" data-sheet="pay">Pay from ${escapeHtml(player.name)}</button>` : '',
     !isSpectator() && !isMe && !player.bankrupt ? '<button type="button" class="secondary" data-sheet="me">This is me</button>' : '',
     canAct && jailRule && !player.bankrupt ? `<button type="button" class="secondary" data-sheet="jail" aria-pressed="${player.inJail}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : ''
   ].filter(Boolean).join('');
-  $('#player-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${escapeHtml(player.color)}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">${isMe ? 'YOU' : 'PLAYER'}</p><h2 id="player-title">${escapeHtml(player.name)}</h2><p class="muted">${status}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Cash</small><strong>${player.bankrupt ? '—' : money.format(player.balance)}</strong></div><div><small>Net worth</small><strong>${money.format(row.total)}</strong></div><div><small>Can raise</small><strong>${money.format(row.raisable)}</strong></div></div><p class="fine-print sheet-breakdown">Net worth = ${money.format(row.cash)} cash + ${money.format(row.property)} deeds + ${money.format(row.buildings)} buildings (resale).</p>${deeds.length ? `<h3 class="sheet-heading">${deeds.length} deed${deeds.length === 1 ? '' : 's'}</h3><ul class="sheet-deeds">${deedRows}</ul>` : '<p class="muted">No deeds.</p>'}${actions ? `<div class="dialog-actions sheet-actions">${actions}</div>` : ''}</div>`;
+  $('#player-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${escapeHtml(player.color)}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">${isMe ? 'YOU' : 'PLAYER'}</p><h2 id="player-title">${escapeHtml(player.name)}</h2><p class="muted">${status}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Cash</small><strong>${player.bankrupt ? '—' : money.format(player.balance)}</strong></div><div><small>Net worth</small><strong>${money.format(row.total)}</strong></div><div><small>Can raise</small><strong>${money.format(row.raisable)}</strong></div></div><p class="fine-print sheet-breakdown">Net worth = ${money.format(row.cash)} cash + ${money.format(row.property)} deeds + ${money.format(row.buildings)} buildings (resale).</p>${deeds.length ? `<h3 class="sheet-heading">${deeds.length} deed${deeds.length === 1 ? '' : 's'}</h3><ul class="sheet-deeds">${deedRows}</ul>` : '<p class="muted">No deeds.</p>'}${quick}${actions ? `<div class="dialog-actions sheet-actions">${actions}</div>` : ''}</div>`;
   applyStyleVars($('#player-content'));
+  $$('[data-quick]', $('#player-content')).forEach((button) => button.addEventListener('click', () => {
+    const item = quickActions().find((entry) => entry.key === button.dataset.quick);
+    quickPay(player, item.in ? item.amount : -item.amount, item.note, item.category);
+  }));
+  $('#quick-custom')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const amount = Number($('#quick-amount').value);
+    if (!(amount >= 1)) return toast('Enter an amount of at least $1.', 'error');
+    const incoming = (event.submitter?.dataset.direction || 'in') === 'in';
+    quickPay(player, incoming ? amount : -amount, incoming ? 'From the Bank' : 'Paid the Bank', 'transfer');
+  });
   $$('[data-sheet]', $('#player-content')).forEach((button) => button.addEventListener('click', async () => {
     const action = button.dataset.sheet;
     if (action === 'deeds') {
@@ -445,6 +458,29 @@ function refreshSheet() {
       await submitAction({ type: 'jail', playerId: player.id, inJail: !player.inJail }, player.inJail ? `${player.name} is out of jail.` : `${player.name} went to jail.`);
     }
   }));
+}
+
+function quickActions() {
+  // Taxes and fees feed the Free Parking pot when that house rule is on (same as the Quick pay presets).
+  return [
+    { key: 'go', label: 'Passed GO +$200', amount: 200, in: true, note: 'Passed GO', category: 'transfer' },
+    ...(rules().doubleGoOnLanding ? [{ key: 'land-go', label: 'Landed on GO +$400', amount: 400, in: true, note: 'Landed on GO', category: 'transfer' }] : []),
+    { key: 'tax', label: 'Income Tax −$200', amount: 200, note: 'Income Tax', category: 'tax' },
+    { key: 'luxury', label: 'Luxury Tax −$100', amount: 100, note: 'Luxury Tax', category: 'tax' },
+    { key: 'jail-fee', label: 'Jail fee −$50', amount: 50, note: 'Jail fee', category: 'fee' }
+  ];
+}
+
+// Positive amounts: the Bank pays the player. Negative: the player pays the Bank (or the Free Parking pot for taxes and fees).
+async function quickPay(player, amount, note, category) {
+  const incoming = amount > 0;
+  const value = Math.abs(amount);
+  const toPot = !incoming && category !== 'transfer' && rules().freeParkingJackpot;
+  const action = incoming
+    ? { type: 'transfer', fromId: 'bank', toId: player.id, amount: value, note, category }
+    : { type: 'transfer', fromId: player.id, toId: toPot ? 'parking' : 'bank', amount: value, note, category };
+  const ok = await submitAction(action, `${player.name} ${incoming ? '+' : '−'}${money.format(value)} · ${note}`);
+  if (ok && $('#quick-amount')) $('#quick-amount').value = '';
 }
 
 function openIdentity() {
