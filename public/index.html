@@ -3,12 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MonoBank: Unofficial Monopoly Banker App – No Paper Money</title>
+  <meta name="description" content="Free, unofficial digital banker for Monopoly game night. One shared bank on every phone: pay rent, buy deeds, trade and track every transaction. No download or sign-up.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://monobank.divviq.app/">
   <meta name="theme-color" content="#0e2c24">
-  <meta name="description" content="A shared tabletop banking companion for game night.">
-  <title>MonoBank — Tabletop Banker</title>
+  <meta name="application-name" content="MonoBank">
+  <meta name="apple-mobile-web-app-title" content="MonoBank">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="MonoBank">
+  <meta property="og:title" content="MonoBank – the unofficial Monopoly banker app">
+  <meta property="og:description" content="Ditch the paper money. One shared bank on every phone for Monopoly game night: rent, deeds, trades and a full activity log. Free, no sign-up.">
+  <meta property="og:url" content="https://monobank.divviq.app/">
+  <meta property="og:image" content="https://monobank.divviq.app/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="MonoBank: Ditch the paper money. Run the bank from your phone.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MonoBank – the unofficial Monopoly banker app">
+  <meta name="twitter:description" content="One shared bank on every phone for Monopoly game night. Free, no sign-up.">
+  <meta name="twitter:image" content="https://monobank.divviq.app/og-image.jpg">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=3">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/styles.css?v=4">
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "MonoBank", "alternateName": "MonoBank – Unofficial Monopoly Banker", "url": "https://monobank.divviq.app/", "description": "Free, unofficial digital banker for Monopoly game night. One shared bank on every phone: pay rent, buy deeds, trade and track every transaction. No download or sign-up.", "applicationCategory": "GameApplication", "operatingSystem": "Any (web browser)", "browserRequirements": "Requires JavaScript and a modern web browser.", "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "image": "https://monobank.divviq.app/og-image.jpg", "featureList": ["Shared live bank for 2–4 players", "Rent calculation", "Deeds, mortgages, houses and hotels", "Trades", "House rules", "Undo", "Bankruptcy and net worth", "QR code to join"], "disambiguatingDescription": "MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc."}</script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -16,7 +36,7 @@
     <header class="topbar">
       <a class="brand" href="/" aria-label="MonoBank home">
         <span class="brand-mark" aria-hidden="true">M</span>
-        <span class="brand-name">MonoBank</span>
+        <span class="brand-text"><span class="brand-name">MonoBank</span><span class="brand-tagline">Unofficial Monopoly® banker</span></span>
       </a>
       <div class="topbar-game" id="game-actions" hidden>
         <span class="game-chip" id="session-badge"><span class="live-dot" aria-hidden="true"></span><span class="sr-only">Live game</span><span id="session-code"></span></span>
@@ -35,11 +55,11 @@
     <main id="main" tabindex="-1">
       <section id="setup-screen" class="setup-layout">
         <div class="hero-panel">
-          <div class="eyebrow"><span></span> THE BANK IS OPEN</div>
-          <h1>Your game.<br><em>One shared bank.</em></h1>
-          <p>Replace paper cash with a fast, shared companion built for the table—not the spreadsheet.</p>
+          <div class="eyebrow"><span></span> FREE · UNOFFICIAL MONOPOLY® BANKER</div>
+          <h1>Ditch the paper money.<br><em>Run the bank from your phone.</em></h1>
+          <p>MonoBank is a free digital banker for Monopoly game night. Everyone at the table shares one live bank—pay rent, buy deeds, trade and mortgage in seconds, with every transaction tracked. No download, no sign-up.</p>
           <div class="feature-strip" aria-label="Features">
-            <span>⚡ Instant transfers</span><span>⌂ Deed manager</span><span>↗ Shareable link &amp; QR</span><span>⚙ House rules</span>
+            <span>⚡ Instant payments</span><span>⌂ Deeds &amp; automatic rent</span><span>↗ Shareable link &amp; QR</span><span>⚙ House rules</span>
           </div>
           <div class="table-art" aria-hidden="true">
             <div class="board-card card-a"><span></span><b>BOARDWALK</b><small>$400</small></div>
@@ -72,7 +92,7 @@
             <p class="form-error" id="setup-error" role="alert"></p>
             <button class="primary-button full" type="submit"><span>OPEN THE BANK</span><span aria-hidden="true">→</span></button>
           </form>
-          <p class="fine-print">No sign-in. Games are saved and kept for 24 hours after their last activity.</p>
+          <p class="fine-print">No sign-in. Games are saved and kept for 24 hours after their last activity. Bring your own board game—MonoBank replaces only the paper money and the banker’s paperwork.</p>
         </div>
       </section>
 
@@ -174,6 +194,11 @@
       </section>
     </main>
 
+    <footer class="site-footer">
+      <p><strong>MonoBank</strong> · Unofficial banker for Monopoly game night</p>
+      <p class="trademark">MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc.</p>
+    </footer>
+
     <nav id="mobile-nav" class="mobile-nav" aria-label="Game navigation" hidden>
       <button data-mobile-view="pay" class="active"><span>↔</span>Pay</button>
       <button data-mobile-view="deeds"><span>⌂</span>Deeds</button>
@@ -186,6 +211,6 @@
   <dialog id="qr-dialog" class="deed-dialog" aria-labelledby="qr-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">JOIN THIS GAME</p><h2 id="qr-title">Scan to join</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div id="qr-code" class="qr-code"></div><p class="qr-url" id="qr-url"></p><button type="button" class="secondary-button full" id="qr-copy">Copy link</button></div></dialog>
   <dialog id="results-dialog" class="deed-dialog" aria-labelledby="results-title"><div id="results-content"></div></dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/app.js?v=3"></script>
+  <script type="module" src="/app.js?v=4"></script>
 </body>
 </html>

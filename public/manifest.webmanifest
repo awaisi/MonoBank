@@ -1,12 +1,23 @@
 {
-  "name": "MonoBank — Tabletop Banker",
+  "name": "MonoBank – Unofficial Monopoly Banker",
   "short_name": "MonoBank",
+  "description": "Free, unofficial digital banker for Monopoly game night. One shared bank on every phone.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#071a16",
   "theme_color": "#0e2c24",
-  "description": "A shared tabletop banking companion for your property trading game.",
+  "categories": [
+    "games",
+    "entertainment",
+    "utilities"
+  ],
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
   ]
 }

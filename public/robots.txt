@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /game/
+Disallow: /api/
+
+Sitemap: https://monobank.divviq.app/sitemap.xml
