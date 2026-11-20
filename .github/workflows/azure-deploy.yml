@@ -3,6 +3,9 @@ name: Build, test, and deploy to Azure
 on:
   push:
     branches: [main]
+  # Pull requests run the build job only (checks, tests, coverage gate, browser tests); deploys happen on main.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,8 +13,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: azure-production
-  cancel-in-progress: false
+  # Deploys queue one at a time; a pull request only cancels its own older runs.
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'azure-production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Set the repository variable AZURE_LOCATION to override the region.
@@ -45,12 +49,27 @@ jobs:
         run: npm run check
       - name: Test
         run: npm test
+      - name: Coverage gate (100% lines on core modules)
+        run: npm run coverage:check
+      # The repo has no dependencies: Playwright is installed in a scratch folder and found through NODE_PATH.
+      - name: Install Playwright outside the repo
+        run: |
+          mkdir -p "$RUNNER_TEMP/playwright"
+          cd "$RUNNER_TEMP/playwright"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/playwright/node_modules" >> "$GITHUB_ENV"
+      - name: Browser end-to-end tests
+        env:
+          E2E_REQUIRED: '1'
+        run: npm run e2e
       - name: Build container image
         run: docker build -t monobank:ci .
 
   deploy:
     needs: build
-    if: needs.build.outputs.azure_configured == 'true'
+    if: needs.build.outputs.azure_configured == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: production

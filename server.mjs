@@ -2,6 +2,7 @@ import { createServer as createNodeServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { GameError, performAction, publicGame, spectatorView, ledgerPage, ledgerCsv } from './lib/game.mjs';
 import { GameStore } from './lib/store.mjs';
@@ -21,23 +22,59 @@ const MIME = {
 
 const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
+  // Production is HTTPS-only; browsers ignore this header on plain-HTTP localhost.
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'same-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   'Content-Security-Policy': "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'self'; frame-ancestors 'none'"
 };
 
+// Compression: brotli for static files (compressed once per version and cached), gzip for dynamic
+// responses (fast). Game state is very repetitive JSON, so this cuts what phones download by ~10x.
+const MIN_COMPRESS = 1024;
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript|xml|manifest\+json)|image\/svg\+xml)/;
+const staticCache = new Map();
+
+function acceptsEncoding(req, name) {
+  return new RegExp(`\\b${name}\\b`).test(String(req?.headers['accept-encoding'] || ''));
+}
+
+/** Gzip a dynamic body when the client accepts it and it is worth it; returns [body, extra headers]. */
+function compressDynamic(req, body) {
+  if (body.length < MIN_COMPRESS || !acceptsEncoding(req, 'gzip')) return [body, { Vary: 'Accept-Encoding' }];
+  return [gzipSync(body), { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' }];
+}
+
 function sendJson(res, status, value, headers = {}) {
-  res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', ...headers });
-  res.end(JSON.stringify(value));
+  const [body, encoding] = compressDynamic(res.req, Buffer.from(JSON.stringify(value)));
+  res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', ...encoding, ...headers });
+  res.end(body);
 }
 
 function sendCsv(res, game) {
+  const [body, encoding] = compressDynamic(res.req, Buffer.from(ledgerCsv(game)));
   res.writeHead(200, {
-    ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex',
+    ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', ...encoding,
     'Content-Disposition': `attachment; filename="monobank-activity-${new Date().toISOString().slice(0, 10)}.csv"`
   });
-  res.end(ledgerCsv(game));
+  res.end(body);
+}
+
+/** The static body to send: brotli or gzip when accepted (cached per file version), else the original. */
+function staticBody(req, filePath, content, contentType, etag) {
+  if (content.length < MIN_COMPRESS || !COMPRESSIBLE.test(contentType)) return { body: content, etag, headers: {} };
+  const encoding = acceptsEncoding(req, 'br') ? 'br' : acceptsEncoding(req, 'gzip') ? 'gzip' : null;
+  if (!encoding) return { body: content, etag, headers: { Vary: 'Accept-Encoding' } };
+  const key = `${filePath}|${etag}|${encoding}`;
+  if (!staticCache.has(key)) {
+    for (const old of staticCache.keys()) if (old.startsWith(`${filePath}|`) && !old.startsWith(`${filePath}|${etag}|`)) staticCache.delete(old);
+    staticCache.set(key, encoding === 'br'
+      ? brotliCompressSync(content, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: content.length } })
+      : gzipSync(content, { level: 9 }));
+  }
+  // Each encoding is a different representation, so it gets its own ETag.
+  return { body: staticCache.get(key), etag: `${etag.slice(0, -1)}-${encoding}"`, headers: { 'Content-Encoding': encoding, Vary: 'Accept-Encoding' } };
 }
 
 async function readJson(req) {
@@ -123,12 +160,15 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
       const extension = extname(filePath);
       // Every asset is revalidated (cheap 304s via ETag) so a deploy can never
       // leave browsers with new HTML but stale CSS or JavaScript.
-      const etag = `"${createHash('sha1').update(content).digest('base64url')}"`;
+      const contentType = MIME[extension] || 'application/octet-stream';
+      const variant = staticBody(req, filePath, content, contentType, `"${createHash('sha1').update(content).digest('base64url')}"`);
+      const etag = variant.etag;
       const headers = {
         ...securityHeaders,
-        'Content-Type': MIME[extension] || 'application/octet-stream',
+        'Content-Type': contentType,
         'Cache-Control': 'no-cache',
         ETag: etag,
+        ...variant.headers,
         // Game links are private sessions: keep them out of search results.
         ...(appRoute ? { 'X-Robots-Tag': 'noindex, nofollow' } : {})
       };
@@ -137,7 +177,7 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         return res.end();
       }
       res.writeHead(200, headers);
-      res.end(content);
+      res.end(variant.body);
     } catch (error) {
       if (error?.code === 'ENOENT') return sendJson(res, 404, { error: 'Not found.' });
       const status = error instanceof GameError ? error.status : 500;

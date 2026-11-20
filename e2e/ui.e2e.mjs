@@ -14,7 +14,10 @@ const require = createRequire(import.meta.url);
 let chromium;
 try { ({ chromium } = require('playwright')); } catch { /* reported below */ }
 
-test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installed' }, async (t) => {
+// Locally the browser test is optional; CI sets E2E_REQUIRED=1 so a missing Playwright fails instead of skipping.
+const skipReason = chromium || process.env.E2E_REQUIRED ? false : 'Playwright is not installed';
+test('MonoBank UI flows', { skip: skipReason }, async (t) => {
+  if (!chromium) throw new Error('Playwright is required (E2E_REQUIRED=1) but could not be loaded. Install it outside the repo and set NODE_PATH.');
   const store = new GameStore();
   const server = createAppServer({ store });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -692,6 +695,39 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(await phone.isVisible('#deed-grid'), true);
     assert.deepEqual(phoneErrors, []);
     await phone.close();
+  });
+
+  await t.test('explains network problems in plain words and resyncs after an unconfirmed move', async () => {
+    const net = await store.create({ players: ['Ana', 'Ben'] });
+    await store.save(net);
+    const context = await browser.newContext({ viewport: { width: 375, height: 760 } });
+    const phone = await context.newPage();
+    await phone.goto(`${base}/game/${net.id}`);
+    await phone.click('#identity-options [data-identity="banker"]');
+    const pay = async () => {
+      await phone.selectOption('#payment-from', { label: 'Ana' });
+      await phone.selectOption('#payment-to', { label: 'Ben' });
+      await phone.fill('#payment-amount', '25');
+      await phone.click('#payment-form button[type=submit]');
+    };
+    // Offline: nothing is sent, and the message says so.
+    await context.setOffline(true);
+    await pay();
+    await phone.waitForSelector('.toast.error:has-text("You’re offline. Nothing was sent")');
+    await context.setOffline(false);
+    // The connection drops after sending: the app refreshes and asks the player to check Activity.
+    await phone.route('**/actions', (route) => route.abort('connectionreset'));
+    await pay();
+    await phone.waitForSelector('.toast.error:has-text("Couldn’t confirm that move. Check Activity")');
+    await phone.unroute('**/actions');
+    assert.equal(net.players[0].balance, 1500, 'no money moved on either failure');
+    // Accessibility: no text below 10px; timestamps readable; the summary doesn't re-announce every move.
+    await phone.click('#mobile-nav [data-mobile-view="ledger"]');
+    assert.equal(await phone.getAttribute('#ledger-summary', 'aria-live'), null);
+    const tiny = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter((element) => element.childNodes.length && [...element.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim()) && element.getClientRects().length && parseFloat(getComputedStyle(element).fontSize) < 10).map((element) => element.className || element.tagName));
+    assert.deepEqual(tiny, [], 'no visible text smaller than 10px');
+    assert.ok(parseFloat(await phone.$eval('.ledger-amount time', (time) => getComputedStyle(time).fontSize)) >= 11);
+    await context.close();
   });
 
   await t.test('logs no console or CSP errors', () => {

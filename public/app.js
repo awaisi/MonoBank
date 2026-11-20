@@ -141,14 +141,24 @@ function updateSetupRules() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
+    });
+  } catch {
+    // The request never got an answer: offline, or the connection dropped. Say so in plain words.
+    const offline = navigator.onLine === false;
+    const error = new Error(offline ? 'You’re offline. Nothing was sent; try again once you’re back online.' : 'Couldn’t reach MonoBank. Check your connection and try again.');
+    error.code = offline ? 'offline' : 'network';
+    error.status = 0;
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.error || 'Request failed.');
+    const error = new Error(data.error || (response.status >= 500 ? 'MonoBank is having trouble right now. Try again in a moment.' : 'Request failed.'));
     error.status = response.status;
     error.code = data.code;
     error.details = data.details;
@@ -919,6 +929,12 @@ async function submitAction(action, successMessage) {
   } catch (error) {
     if (error.status === 409) await loadGame(true);
     feedback.play('error');
+    if (error.code === 'network') {
+      // The move may have reached the bank before the connection dropped. Refresh, then let the player check.
+      await loadGame(true);
+      toast('Couldn’t confirm that move. Check Activity: if it isn’t there, try again.', 'error');
+      return false;
+    }
     if (error.code === 'insufficient-funds') {
       openRaiseCash({ ...error.details, message: error.message });
       return false;
@@ -1044,7 +1060,7 @@ function openResults() {
   const played = playTimeText(game.playTime);
   const table = rows.map((row) => `<tr class="${game.winnerIds.includes(row.playerId) ? 'winner-row' : ''}"><td>${row.bankrupt ? '—' : row.rank}</td><td>${escapeHtml(row.name)}${row.bankrupt ? ' <small>bankrupt</small>' : ''}</td><td>${money.format(row.cash)}</td><td>${money.format(row.property)}</td><td>${money.format(row.buildings)}</td><td><strong>${money.format(row.total)}</strong></td></tr>`).join('');
   const rentLeader = Object.entries(rentBy).sort((a, b) => b[1] - a[1])[0];
-  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${played} · ${moves} ${moves === 1 ? 'move' : 'moves'}${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p><a class="secondary-button full results-export" href="${apiBase()}/activity.csv" download>⇩ Download activity (CSV)</a>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
+  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${played} · ${moves} ${moves === 1 ? 'move' : 'moves'}${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p><p class="fine-print results-kept">This finished game stays available for 7 days; download the activity to keep a copy.</p><a class="secondary-button full results-export" href="${apiBase()}/activity.csv" download>⇩ Download activity (CSV)</a>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
   $('[data-undo-results]', $('#results-content'))?.addEventListener('click', async () => {
     if (await submitAction({ type: 'undo' }, 'Back in play.')) $('#results-dialog').close();
   });
