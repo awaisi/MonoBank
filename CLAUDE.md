@@ -6,14 +6,16 @@ MonoBank is a mobile-first shared banking companion for a classic property-tradi
 
 ```bash
 npm test          # node --test (test/*.test.mjs)
-npm run check     # node --check on server.mjs, lib/game.mjs, public/app.js
+npm run coverage  # tests + coverage report (node --experimental-test-coverage)
+npm run check     # node --check on server.mjs, lib/game.mjs, public/app.js, public/qr.js
+npm run e2e       # Playwright browser test (e2e/ui.e2e.mjs); needs Playwright installed, skips otherwise
 npm run dev       # node --watch server.mjs → http://localhost:3000
 docker build -t monobank . && docker run -p 3000:3000 monobank
 ```
 
 Requires Node.js 22+. There are **no runtime or dev dependencies**; keep it that way. Do not add a framework, bundler, or npm package without explicit approval. Use `node:test` / `node:assert` for tests.
 
-Run `npm run check && npm test` before every commit. If `lib/game.mjs` or `public/app.js` gains new files, add them to the `check` script.
+Run `npm run check && npm test` before every commit, and `npm run e2e` for any UI change. If a new `.js`/`.mjs` source file is added, add it to the `check` script.
 
 ## Architecture
 
@@ -23,7 +25,10 @@ Run `npm run check && npm test` before every commit. If `lib/game.mjs` or `publi
 | `lib/game.mjs` | All game rules. `createGame`, `performAction`, `calculateRent`, `publicGame`, `GameStore` (in-memory, 24 h TTL). |
 | `lib/properties.mjs` | Deed data (28 classic U.S. deeds) and color groups. |
 | `public/` | Vanilla JS single-page client (`app.js`), `index.html`, `styles.css`, PWA manifest. No build step. |
-| `test/game.test.mjs` | Rules (including every house rule) and API tests. |
+| `public/qr.js` | Dependency-free QR encoder (byte mode, versions 1–10). Shared by the browser and Node tests. |
+| `test/*.test.mjs` | `game` (core + house rules), `rules` (rent/building/trade/validation), `features` (undo, bankruptcy, net worth, end game), `qr`, `server` (HTTP, errors, static files, TTL). |
+| `e2e/ui.e2e.mjs` | Browser end-to-end test of the main flows; not part of `npm test`. |
+| `docs/FEATURE_PLAN.md` | Prioritized backlog and shipped features. |
 | `Dockerfile` | Production image (Node 22 Alpine, runs as `node`). |
 | `infra/` | Bicep (Azure Container Apps), bootstrap and Cloudflare DNS scripts. |
 | `.github/workflows/` | `azure-deploy.yml` (every push to `main`), `azure-bootstrap.yml` (one-time, manual). |
@@ -31,7 +36,9 @@ Run `npm run check && npm test` before every commit. If `lib/game.mjs` or `publi
 ### Game model rules
 
 - **The server is the source of truth.** Every rule is enforced in `lib/game.mjs`; the client only mirrors rules for display (button labels, hidden controls). Never rely on client-side validation.
-- **One action type per change.** New behavior goes through `performAction` with a new `case`, validates input with `GameError` messages written for players, and calls `record()` (or `move()`) exactly once per action so `revision` increments once.
+- **One action type per change.** New behavior goes through `performAction` → `applyAction` with a new `case`, validates input with `GameError` messages written for players, and calls `record()` (or `move()`) exactly once per action so `revision` increments once and undo has one ledger entry to mark.
+- **Actions are atomic and undoable.** `performAction` snapshots `UNDOABLE_KEYS` (`players`, `deeds`, `freeParking`, `status`, `endedAt`, `winnerIds`) before each action, restores it if the action throws, and pushes it onto `game.history` (last 50) on success. Any new mutable game state **must be added to `UNDOABLE_KEYS`**, or undo will not restore it. `undo` marks the original entry `undone: true` and records a new entry; transactions and `revision` never roll back. `publicGame()` strips `history` and exposes only `undo: { label, transactionId }`.
+- **Bankruptcy and game end.** Bankrupt players (`player.bankrupt`) are rejected by `player()` for every action and hidden from client pickers. `status: 'ended'` blocks every action except `undo`. Net worth (`netWorth()`, `standings()`) = cash + deeds at list price (mortgaged at mortgage value) + buildings at cost.
 - **Money is whole dollars.** Use the `money()` helper for any amount from input. Balances may go negative (the table settles debts); do not block payments for insufficient funds unless a rule requires it.
 - **Optimistic concurrency.** Clients send `expectedRevision`; a mismatch returns HTTP 409 and the client reloads. Keep this for every action.
 - **Accounts** are player IDs plus the special IDs `bank` and `parking` (Free Parking pot, only when that house rule is on).
@@ -55,6 +62,20 @@ Run `npm run check && npm test` before every commit. If `lib/game.mjs` or `publi
 - `infra/bootstrap-azure.sh` / the bootstrap workflow are one-time setup and need the `BOOTSTRAP_*` secrets, which may have been deleted. Do not depend on them for routine deploys.
 - Never commit secrets. Never put secrets in Bicep parameters files, workflow `env`, or logs.
 
-## Docs to keep in sync
+## Testing standard
 
-When behavior changes, update in the same change: `README.md` (features, house rules, API actions, deployment), this file, and the setup/help copy in `public/index.html`.
+- Every action needs tests for the success path, **each** `GameError` path, undo of the action, and at least one API-level test in `test/server.test.mjs` when it adds a new action type.
+- Keep **100% line coverage** for `lib/game.mjs` and `public/qr.js` (`npm run coverage`). Do not lower coverage to land a feature.
+- UI changes: extend `e2e/ui.e2e.mjs` for the new flow and run `npm run e2e` (it also asserts no console/CSP errors and no horizontal scroll at 375 px).
+
+## Update all documents after every feature change (required)
+
+A feature or behavior change is not done until, **in the same PR**:
+
+1. **`README.md`**: highlights, the relevant feature section, house rules table, API actions table, testing or deployment notes.
+2. **`docs/FEATURE_PLAN.md`**: move the item to *Shipped* (with PR number), and add or reprioritize anything new that was discovered.
+3. **`CLAUDE.md`** (this file): architecture table, game-model invariants, commands, conventions.
+4. **In-app copy** in `public/index.html` (setup text, feature strip, help text) and any user-facing strings in `public/app.js`.
+5. **Tests**: per the testing standard above.
+
+Check each item explicitly before opening the PR, and list the docs you updated in the PR description.

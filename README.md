@@ -13,6 +13,11 @@ MonoBank is a mobile-first, shared banking companion for a classic property-trad
 - Mortgage and unmortgage deeds; buy and sell houses/hotels with even-building checks.
 - Pick **house rules** per game: Free Parking jackpot, $400 for landing on GO, no rent in jail, auctions on/off, even building on/off, and mortgage interest.
 - Track who is in jail, and run a Free Parking pot with its own balance and one-tap payout.
+- **Undo** the last action (and keep going back), with undone entries struck through in the activity feed.
+- **Bankruptcy**: hand a player's cash and deeds to their creditor or the Bank; the last player standing wins.
+- **Net worth** on every player card, and an **End game** results screen with final standings.
+- **QR code** to join a game from another phone.
+- **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
 - Use an accessible responsive UI designed as a tableside game console.
 - Keep sessions in server memory for 24 hours after the latest activity.
@@ -43,7 +48,29 @@ docker build -t monobank .
 docker run -p 3000:3000 monobank
 ```
 
-Contributor and coding-agent guidance (architecture, conventions, deployment constraints) lives in [`CLAUDE.md`](CLAUDE.md).
+Contributor and coding-agent guidance (architecture, conventions, deployment constraints) lives in [`CLAUDE.md`](CLAUDE.md). The prioritized backlog is in [`docs/FEATURE_PLAN.md`](docs/FEATURE_PLAN.md).
+
+## Testing
+
+```bash
+npm test           # 64 unit and API tests (node:test)
+npm run coverage   # same, with a coverage report — lib/game.mjs and public/qr.js are at 100% line coverage
+npm run e2e        # browser test of the main flows with Playwright (skipped if Playwright isn't installed)
+```
+
+The project has no dependencies; the e2e test loads Playwright only if it is already available.
+
+## Undo, bankruptcy, and ending a game
+
+- **Undo:** the **↶ Undo** button (Activity panel and Activity tab) reverses the most recent action: payments, purchases, rent, mortgages, buildings, trades, jail, Free Parking, bankruptcy, or game over. Press it again to keep going back, up to 50 actions. Every action is also atomic: if it fails, nothing changes.
+- **Bankruptcy:** under **Quick pay → Declare bankruptcy**, choose the player and who they owe. Their houses and hotels are sold to the Bank at half price. Their cash (if positive) and deeds go to the creditor; mortgaged deeds stay mortgaged. If they owe the Bank, deeds return to the Bank unmortgaged. A negative balance is written off. The player leaves the game, and when only one player remains they win automatically.
+- **Net worth:** cash + deeds at list price (mortgaged deeds at their mortgage value) + houses and hotels at cost. It's shown on each player card.
+- **End game:** **★ End game** declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
+
+## Joining and feedback
+
+- **QR code:** **▦ QR code** shows a scannable code for the game link. It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
+- **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **🔊 Sound** turns this on or off for the current device.
 
 ## House rules
 
@@ -154,7 +181,7 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 ## API overview
 
 - `POST /api/games` — create a game: `{ "players": ["Ana", "Ben"], "startingBalance": 1500, "rules": { "freeParkingJackpot": true, "freeParkingSeed": 500 } }` (`rules` is optional; omitted keys use the defaults)
-- `GET /api/games/:id` — read current game state, including `rules`, `freeParking` (pot balance) and each player's `inJail`
+- `GET /api/games/:id` — read current game state, including `rules`, `freeParking` (pot balance), each player's `inJail` and `bankrupt`, `status` (`active`/`ended`), `winnerIds`, `standings` (net worth breakdown and rank per player), and `undo` (the action that undo would reverse, or `null`)
 - `POST /api/games/:id/actions` — perform one action, selected by `type`:
 
   | `type` | Fields | Notes |
@@ -167,6 +194,11 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
   | `trade` | `firstPlayerId`, `secondPlayerId`, `firstCash`, `secondCash`, `firstPropertyIds`, `secondPropertyIds` | Atomic |
   | `collect-parking` | `playerId` | Pays out the pot and reseeds it; jackpot rule only |
   | `jail` | `playerId`, `inJail` (boolean) | Records a player entering or leaving jail |
+  | `bankrupt` | `playerId`, `creditorId?` (player ID or `bank`, default `bank`) | Liquidates buildings, hands over cash and deeds, removes the player; ends the game if one player remains |
+  | `end-game` | — | Ends the game; highest net worth wins |
+  | `undo` | — | Reverses the most recent action (repeatable, last 50) |
+
+  Every action except `undo` is rejected once the game has ended, and any action naming a bankrupt player is rejected.
 
 - `GET /health` — container liveness/readiness probe and deployment verification
 
