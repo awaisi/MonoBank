@@ -162,3 +162,75 @@ test('serves SEO metadata, crawler files and the share image', async (t) => {
   assert.equal((await fetch(`${base}/game/0123456789abcdef`)).headers.get('x-robots-tag'), 'noindex, nofollow');
   assert.equal((await json('/api/games', { players: ['A', 'B'] })).headers.get('x-robots-tag'), 'noindex');
 });
+
+// ---------------------------------------------------------- compression ----
+
+import { request as httpRequest } from 'node:http';
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
+import { readFile as readPublic } from 'node:fs/promises';
+
+const raw = (base, path, headers = {}) => new Promise((resolve, reject) => {
+  const req = httpRequest(`${base}${path}`, { headers }, (res) => {
+    const chunks = [];
+    res.on('data', (chunk) => chunks.push(chunk));
+    res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+  });
+  req.on('error', reject);
+  req.end();
+});
+
+test('static files are compressed with brotli or gzip, with their own ETags', async (t) => {
+  const { base } = await startServer(t);
+  const original = await readPublic(new URL('../public/app.js', import.meta.url));
+  const br = await raw(base, '/app.js', { 'accept-encoding': 'gzip, deflate, br' });
+  assert.equal(br.headers['content-encoding'], 'br');
+  assert.equal(br.headers.vary, 'Accept-Encoding');
+  assert.match(br.headers.etag, /-br"$/);
+  assert.ok(br.body.length < original.length / 3, `brotli shrinks app.js (${br.body.length} of ${original.length} bytes)`);
+  assert.deepEqual(brotliDecompressSync(br.body), original);
+  assert.equal((await raw(base, '/app.js', { 'accept-encoding': 'br', 'if-none-match': br.headers.etag })).status, 304);
+  const again = await raw(base, '/app.js', { 'accept-encoding': 'br' });
+  assert.deepEqual(again.body, br.body, 'served from the compression cache');
+  const gzip = await raw(base, '/styles.css', { 'accept-encoding': 'gzip' });
+  assert.equal(gzip.headers['content-encoding'], 'gzip');
+  assert.match(gzip.headers.etag, /-gzip"$/);
+  assert.deepEqual(gunzipSync(gzip.body), await readPublic(new URL('../public/styles.css', import.meta.url)));
+  const plain = await raw(base, '/app.js');
+  assert.equal(plain.headers['content-encoding'], undefined, 'no Accept-Encoding: sent as is');
+  assert.deepEqual(plain.body, original);
+  assert.doesNotMatch(plain.headers.etag, /-(br|gzip)"$/);
+  const page = await raw(base, '/game/0123456789abcdef', { 'accept-encoding': 'br' });
+  assert.equal(page.headers['content-encoding'], 'br', 'the app page is compressed too');
+  assert.equal(page.headers['x-robots-tag'], 'noindex, nofollow');
+  const image = await raw(base, '/og-image.jpg', { 'accept-encoding': 'br, gzip' });
+  assert.equal(image.headers['content-encoding'], undefined, 'images are already compressed');
+  const tiny = await raw(base, '/robots.txt', { 'accept-encoding': 'br, gzip' });
+  assert.equal(tiny.headers['content-encoding'], undefined, 'tiny files are not worth compressing');
+});
+
+test('game state and CSV are gzipped when accepted; every response sends HSTS', async (t) => {
+  const { base, json } = await startServer(t);
+  const game = await createGame(json, { players: ['Ana', 'Ben', 'Cy', 'Di', 'Ed', 'Flo'] });
+  const zipped = await raw(base, `/api/games/${game.id}`, { 'accept-encoding': 'gzip, br' });
+  assert.equal(zipped.headers['content-encoding'], 'gzip');
+  assert.equal(zipped.headers.vary, 'Accept-Encoding');
+  const state = JSON.parse(gunzipSync(zipped.body));
+  assert.equal(state.id, game.id);
+  const plain = await raw(base, `/api/games/${game.id}`);
+  assert.equal(plain.headers['content-encoding'], undefined);
+  assert.ok(zipped.body.length < plain.body.length / 3, `game state shrinks (${zipped.body.length} of ${plain.body.length} bytes)`);
+  const health = await raw(base, '/health', { 'accept-encoding': 'gzip' });
+  assert.equal(health.headers['content-encoding'], undefined, 'small JSON is sent as is');
+  let revision = state.revision;
+  for (let i = 0; i < 12; i += 1) {
+    const response = await json(`/api/games/${game.id}/actions`, { type: 'transfer', fromId: 'bank', toId: game.players[i % 6].id, amount: 200, note: 'Passed GO', expectedRevision: revision });
+    revision = (await response.json()).revision;
+  }
+  const csv = await raw(base, `/api/games/${game.id}/activity.csv`, { 'accept-encoding': 'gzip' });
+  assert.equal(csv.headers['content-encoding'], 'gzip');
+  assert.equal(csv.headers['content-type'], 'text/csv; charset=utf-8');
+  assert.match(gunzipSync(csv.body).toString(), /^"Time","Type"/);
+  for (const response of [zipped, health, csv, await raw(base, '/')]) {
+    assert.equal(response.headers['strict-transport-security'], 'max-age=31536000; includeSubDomains');
+  }
+});

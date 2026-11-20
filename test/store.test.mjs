@@ -203,3 +203,73 @@ test('sweep logs files that cannot be inspected and skips ones that vanish', asy
   assert.equal(logger.errors.filter((message) => message.includes('Could not inspect game')).length, 1);
   assert.match(logger.errors[0], new RegExp(`Could not inspect game ${locked.id}`));
 });
+
+// ------------------------------------------------- retention and memory ----
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+test('games are kept 30 days after the last move, finished games 7 days', async () => {
+  const defaults = new GameStore();
+  assert.equal(defaults.ttlMs, 30 * DAY_MS);
+  assert.equal(defaults.endedTtlMs, 7 * DAY_MS);
+  let clock = Date.now();
+  const store = new GameStore({ now: () => clock });
+  const paused = await store.create(players);
+  const finished = await store.create(players);
+  performAction(finished, { type: 'end-game' });
+  clock = Date.parse(finished.updatedAt) + 6 * DAY_MS;
+  assert.equal((await store.get(finished.id)).id, finished.id, 'a finished game is still viewable after 6 days');
+  clock = Date.parse(finished.updatedAt) + 8 * DAY_MS;
+  await assert.rejects(store.get(finished.id), (error) => error.status === 404);
+  assert.equal((await store.get(paused.id)).id, paused.id, 'a paused game survives a week-long break');
+  clock = Date.parse(paused.updatedAt) + 31 * DAY_MS;
+  await assert.rejects(store.get(paused.id), (error) => error.status === 404);
+  // A short active TTL (as in tests and configuration) also caps finished games.
+  const short = new GameStore({ ttlMs: 1000, now: () => clock });
+  const ended = await short.create(players);
+  performAction(ended, { type: 'end-game' });
+  clock = Date.parse(ended.updatedAt) + 2000;
+  assert.equal(short.isExpired(ended), true);
+});
+
+test('idle games leave memory but stay on disk and load again', async (t) => {
+  const dir = await tempDir(t);
+  let clock = Date.now();
+  const store = await new GameStore({ dataDir: dir, now: () => clock }).init();
+  const idle = await store.create(players);
+  const busy = await store.create({ players: ['Cy', 'Di'] });
+  clock = Date.parse(idle.updatedAt) + 3 * 60 * 60 * 1000;
+  busy.updatedAt = new Date(clock).toISOString();
+  await store.sweep();
+  assert.equal(store.games.has(idle.id), false, 'idle for 3 hours: unloaded');
+  assert.equal(store.games.has(busy.id), true, 'recently active: kept');
+  assert.equal(store.watch.has(idle.viewToken), false);
+  assert.equal((await readdir(dir)).includes(`${idle.id}.json`), true, 'still saved on disk');
+  const reloaded = await store.get(idle.id);
+  assert.notEqual(reloaded, idle, 'loaded fresh from disk');
+  assert.equal(reloaded.revision, idle.revision);
+  assert.equal((await store.getByWatchToken(idle.viewToken)).id, idle.id, 'spectator links still work');
+  assert.equal(store.size, 2);
+});
+
+test('a save from a request that held an unloaded game wins over a stale reload', async (t) => {
+  const dir = await tempDir(t);
+  let clock = Date.now();
+  const store = await new GameStore({ dataDir: dir, now: () => clock }).init();
+  const held = await store.create(players);
+  clock = Date.parse(held.updatedAt) + 3 * 60 * 60 * 1000;
+  await store.sweep();
+  // Another request loads the (same-revision) copy from disk while the first one still holds the old object.
+  const reloaded = await store.get(held.id);
+  assert.notEqual(reloaded, held);
+  performAction(held, { type: 'transfer', fromId: held.players[0].id, toId: 'bank', amount: 5 });
+  await store.save(held);
+  assert.equal(store.games.get(held.id), held, 'the newer copy becomes the working copy');
+  // An older copy saved later never replaces the newer working copy.
+  await store.save(reloaded);
+  assert.equal(store.games.get(held.id), held);
+  // A game saved while nothing is in memory is put back too.
+  store.games.delete(held.id);
+  await store.save(held);
+  assert.equal(store.games.get(held.id), held);
+});

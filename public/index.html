@@ -95,7 +95,7 @@
             <p class="form-error" id="setup-error" role="alert"></p>
             <button class="primary-button full" type="submit"><span>OPEN THE BANK</span><span aria-hidden="true">→</span></button>
           </form>
-          <p class="fine-print">No sign-in. Games are saved and kept for 24 hours after their last activity. Bring your own board game—MonoBank replaces only the paper money and the banker’s paperwork.</p>
+          <p class="fine-print">No sign-in. Games are saved and kept for 30 days after the last move (7 days once finished), so you can pause and pick up later. Bring your own board game—MonoBank replaces only the paper money and the banker’s paperwork.</p>
         </div>
       </section>
 
@@ -184,7 +184,7 @@
 
             <div id="ledger-view" class="console-view" hidden>
               <div class="view-heading"><div><p class="kicker">BANK RECORD</p><h2>Activity</h2></div><button type="button" class="undo-button" data-undo hidden>↶ Undo</button></div>
-              <div id="ledger-summary" class="activity-summary" aria-live="polite"></div>
+              <div id="ledger-summary" class="activity-summary"></div>
               <div class="ledger-toolbar">
                 <label class="ledger-pick"><span class="sr-only">Show activity for</span><select id="ledger-filter" aria-label="Show activity for"><option value="all">Everyone</option></select></label>
                 <label class="ledger-pick"><span class="sr-only">Type of activity</span><select id="ledger-type" aria-label="Type of activity"><option value="all">All types</option><option value="payments">Payments</option><option value="rent">Rent</option><option value="deeds">Deeds</option><option value="building">Building</option><option value="trades">Trades</option></select></label>

@@ -30,7 +30,7 @@ Live at **https://monobank.divviq.app**.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
 - Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand and the tagline “Unofficial Monopoly® banker”; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **Finish game…**.
-- Games are saved durably and survive restarts and deploys; they expire after 24 hours of inactivity.
+- Games are saved durably and survive restarts and deploys. A paused game is kept for **30 days** after its last move (a finished one for 7 days), so you can pick up next weekend.
 - Built-in abuse protection: per-IP rate limits and a cap on active games.
 
 ## Run locally
@@ -64,12 +64,13 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ## Testing
 
 ```bash
-npm test           # 116 unit and API tests (node:test)
-npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # 34 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm test           # 136 unit and API tests (node:test)
+npm run coverage   # same, with a coverage report
+npm run coverage:check  # fails unless lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js have 100% line coverage (CI runs this)
+npm run e2e        # 35 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
-The project has no dependencies; the e2e test loads Playwright only if it is already available.
+The project has no dependencies; the e2e test loads Playwright only if it is already available. CI installs Playwright in a scratch folder (outside the repo, found through `NODE_PATH`) and sets `E2E_REQUIRED=1`, so there a missing browser fails the run instead of skipping it.
 
 ## Undo, bankruptcy, and ending a game
 
@@ -122,7 +123,7 @@ Games created through the API without `rules` use the defaults above, which matc
 
 Each game gets a random 16-character URL identifier. Anyone with that URL can make changes; there is no sign-in.
 
-**Games are durable.** In production every game is saved as a JSON file on an Azure Files share mounted at `/data`. The file is written atomically after every action and loaded again on first use after a restart. Deploys, restarts and platform maintenance no longer lose games in progress, and undo history survives too. Games are deleted after **24 hours without activity**.
+**Games are durable.** In production every game is saved as a JSON file on an Azure Files share mounted at `/data`. The file is written atomically after every action and loaded again on first use after a restart. Deploys, restarts and platform maintenance no longer lose games in progress, and undo history survives too. Games are deleted **30 days after their last move**, or **7 days** after they finish. Games that have been idle for two hours are dropped from memory (they stay on disk and load again on the next visit), so long retention doesn't grow the server's memory.
 
 The server keeps a working copy of each active game in memory and writes it through to disk, so it must run as **exactly one instance**. Running several replicas would need a shared database first.
 
@@ -229,10 +230,10 @@ If the secrets are missing, the workflow skips the custom domain with a warning 
 
 ### Deployment flow
 
-Every push to `main`:
+Every pull request to `main` runs steps 1–2 (no deploy), so problems show up before merging. Every push to `main`:
 
 1. Checks out the repository and uses Node.js 22.
-2. Runs syntax checks and all tests.
+2. Runs syntax checks, all tests, the 100% line-coverage gate on the core modules, and the Playwright browser tests.
 3. Signs into Azure with OIDC.
 4. Deploys the shared infrastructure in `infra/main.bicep` (resource group, registry, Log Analytics, Container Apps environment) idempotently.
 5. Builds the container image, pushes it to the registry tagged with the commit SHA, and deploys the container app with that image.
@@ -283,7 +284,7 @@ The client sends an expected revision with each action. A stale browser receives
 
 ## Security and accessibility
 
-Static files are served with `Cache-Control: no-cache` and an `ETag`, so browsers revalidate (cheap 304s) and never mix a new page with stale CSS or JavaScript after a deploy. MonoBank sets a restrictive Content Security Policy (no inline scripts or style attributes; per-element colors are applied through the CSSOM) and related browser security headers, caps request bodies, validates all actions server-side, escapes player-provided text in the client, uses native dialog and form controls, supports keyboard focus, exposes labels and live notifications, provides strong contrast, adapts to reduced-motion preferences, and includes a 320px-friendly mobile layout.
+Static files are served with `Cache-Control: no-cache` and an `ETag`, so browsers revalidate (cheap 304s) and never mix a new page with stale CSS or JavaScript after a deploy. MonoBank sets a restrictive Content Security Policy (no inline scripts or style attributes; per-element colors are applied through the CSSOM) and related browser security headers (including HSTS), compresses responses (brotli for the app's files, gzip for game state, exports and the live stream; a long game's update shrinks from about 56 KB to a few KB), caps request bodies, validates all actions server-side, escapes player-provided text in the client, uses native dialog and form controls, supports keyboard focus, exposes labels and live notifications, keeps text at 10px or larger with WCAG AA contrast (4.5:1) for secondary text, explains network problems in plain words (offline, or a move that couldn't be confirmed, after which the game refreshes), adapts to reduced-motion preferences, and includes a 320px-friendly mobile layout.
 
 ## License
 

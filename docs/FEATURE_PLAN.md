@@ -26,6 +26,7 @@ Priorities:
 | **No negative balances + Raise cash dialog** | PR #11 | Every debit checks the payer's cash; shortfall, raisable amount, Sell/Mortgage buttons and a bankruptcy shortcut. Hotels can't be bought on credit. |
 | **Net worth as equity** | PR #11 | Mortgaged deeds net of payoff, buildings at resale; reversible moves net to zero (was purchase price, which hid resale losses and interest). |
 | **Balance strip, activity filter, deed owner pills, Pay rent wording, your name first** | PR #11 | Balances pinned on every tab; Activity filter by player or Bank; Deeds owner pills with counts; "Who pays rent? → Pay rent to …"; this phone's player first in all lists. |
+| **Project review batch: retention, compression, CI gates, network errors, readability, HSTS** | PR #20 | Games kept 30 days (7 once finished) instead of 24 h, idle games unloaded from memory; brotli/gzip for files, JSON, CSV and the live stream (~10× less data per update); CI runs the coverage gate and Playwright e2e, also on pull requests; plain-language offline/network errors with a resync; no text under 10px and AA contrast for secondary text; no `aria-live` on the Activity summary; HSTS. |
 | **Deeds Sets view** | PR #19 | Deeds → List / Sets. Sets: one row per color group (plus railroads, utilities) with owner tokens, buildings, mortgages, complete-set outline and "needs 1" hints; owner filter dims; tap for the deed dialog; mode remembered per device. Chosen over a board map for phones and lower trade-dress risk. |
 | **Compact Activity controls** | PR #18 | On phones the list starts about 110 px into the tab instead of about 700 px: one toolbar row (player and type pickers, search on demand, Undo icon), no title row, and the summary collapsed to one line that expands on tap. |
 | **Activity page for long games** | PR #17 | Full history (2,000 entries, paged to phones 150 at a time) instead of a silent 300 cap; 15-minute timeline with clock times; compact rows; type chips and search; per-player signed amounts and balance after each move (server balance stamps); player and "Game so far" summaries (server `activity` stats, also used by the results screen); undone entries hidden by default; Show earlier paging; sidebar summary on desktop; CSV export. |
@@ -47,6 +48,18 @@ Priorities:
 ### P0: trust and data loss
 
 All P0 items have shipped (#1 and #3 in PR #7). New P0s go here.
+
+### From the project review (November 2026)
+
+| # | Item | Why | Effort | Notes |
+| --- | --- | --- | --- | --- |
+| 29 | **Backups of game files** | The share is soft-delete protected, but individual files are not; a bug or bad deploy could erase games. | S | Daily Azure Files share snapshots (keep ~7); document restore. |
+| 30 | **Uptime and restart alerts** | Nobody is told if the site is down until game night. | S | Azure availability test on `/health` plus an alert on container restarts. |
+| 31 | **Lighter saves** | A long game's file reaches ~760 KB and is rewritten after every action. | M | Coalesce saves per game (~300 ms); drop per-entry `deltas` (derivable from consecutive `balances`). |
+| 32 | **Independent e2e scenarios** | One failing step currently cascades into many failures. | M | Seed each scenario's game through the store; keep the shared flow short. |
+| 33 | **Split `public/app.js` into modules** | 1,270 lines in one file; pure helpers have no unit tests. | M | Native ES modules (CSP allows `'self'`), no build step; unit-test `setStatus`, `cashChange`, `playTimeText`. |
+| 34 | **Consolidate `styles.css`** | Successive redesigns redefine selectors 4–5 times (45 KB). | M | One block per component; remove dead overrides. |
+| 35 | **Who made each change** | Any phone can undo anything; Activity can't say which phone did it. | M | Optional client-supplied actor (the device's "playing as") stored on ledger entries; shown in Activity; not a permission system. |
 
 ### P1: rule gaps and table speed
 

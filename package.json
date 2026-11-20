@@ -13,6 +13,7 @@
     "test": "node --test",
     "check": "node --check server.mjs && node --check lib/game.mjs && node --check lib/store.mjs && node --check lib/rate-limit.mjs && node --check lib/streams.mjs && node --check public/app.js && node --check public/qr.js",
     "coverage": "node --test --experimental-test-coverage",
-    "e2e": "node --test e2e/ui.e2e.mjs"
+    "e2e": "node --test e2e/ui.e2e.mjs",
+    "coverage:check": "node --test --experimental-test-coverage --test-coverage-include=lib/game.mjs --test-coverage-include=lib/store.mjs --test-coverage-include=lib/rate-limit.mjs --test-coverage-include=lib/streams.mjs --test-coverage-include=public/qr.js --test-coverage-lines=100"
   }
 }
