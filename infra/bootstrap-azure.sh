@@ -19,17 +19,42 @@ TENANT_ID="$(az account show --query tenantId -o tsv)"
 SCOPE="/subscriptions/$SUBSCRIPTION_ID"
 DISPLAY_NAME="monobank-github-$OWNER"
 
+# Microsoft Graph is eventually consistent: an object created a moment ago can
+# return "does not exist" on the next call. Retry such calls for up to ~2 min.
+retry() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if "$@"; then return 0; fi
+    if [[ $attempt -eq 8 ]]; then
+      echo "Giving up after $attempt attempts: $*" >&2
+      return 1
+    fi
+    echo "Waiting for Microsoft Entra replication (attempt $attempt)..." >&2
+    sleep 15
+  done
+}
+
 echo "Creating or reusing Microsoft Entra application $DISPLAY_NAME..."
-CLIENT_ID="$(az ad app list --display-name "$DISPLAY_NAME" --query "[0].appId" -o tsv)"
-if [[ -z "$CLIENT_ID" ]]; then
-  CLIENT_ID="$(az ad app create --display-name "$DISPLAY_NAME" --query appId -o tsv)"
+# Values of a JMESPath list come back one per line with -o tsv; normalise tabs too.
+ids() { tr '\t' '\n'; }
+APP_IDS=()
+mapfile -t APP_IDS < <(az ad app list --display-name "$DISPLAY_NAME" \
+  --query "[0].[appId, id]" -o tsv | ids)
+if [[ -z "${APP_IDS[0]:-}" ]]; then
+  mapfile -t APP_IDS < <(az ad app create --display-name "$DISPLAY_NAME" \
+    --query "[appId, id]" -o tsv | ids)
 fi
-APP_OBJECT_ID="$(az ad app show --id "$CLIENT_ID" --query id -o tsv)"
+CLIENT_ID="${APP_IDS[0]:-}"
+APP_OBJECT_ID="${APP_IDS[1]:-}"
+[[ -n "${CLIENT_ID:-}" && -n "${APP_OBJECT_ID:-}" ]] || { echo "Could not find or create application $DISPLAY_NAME" >&2; exit 1; }
+echo "Application: client $CLIENT_ID, object $APP_OBJECT_ID"
 
 SP_OBJECT_ID="$(az ad sp list --filter "appId eq '$CLIENT_ID'" --query "[0].id" -o tsv)"
 if [[ -z "$SP_OBJECT_ID" ]]; then
-  SP_OBJECT_ID="$(az ad sp create --id "$CLIENT_ID" --query id -o tsv)"
+  create_sp() { SP_OBJECT_ID="$(az ad sp create --id "$CLIENT_ID" --query id -o tsv)"; }
+  retry create_sp
 fi
+echo "Service principal: $SP_OBJECT_ID"
 
 echo "Granting Contributor on $SCOPE..."
 EXISTING_ROLE="$(az role assignment list --scope "$SCOPE" --role Contributor \
@@ -47,26 +72,45 @@ if [[ -z "$EXISTING_ROLE" ]]; then
   done
 fi
 
-echo "Configuring federated credential for repo:$REPO:environment:$ENVIRONMENT..."
-CREDENTIAL_NAME="github-$ENVIRONMENT"
+# GitHub issues OIDC subjects either in the classic form (repo:owner/name:...)
+# or, for newer repositories, with immutable IDs (repo:owner@id/name@id:...).
+# Register both so the trust works whichever form this repository uses.
+read -r GH_OWNER GH_OWNER_ID GH_NAME GH_REPO_ID < <(gh api "repos/$REPO" \
+  --jq '[.owner.login, (.owner.id|tostring), .name, (.id|tostring)] | join(" ")')
+[[ -n "${GH_REPO_ID:-}" ]] || { echo "Could not read repository details for $REPO" >&2; exit 1; }
+
 CREDENTIAL_FILE="$(mktemp)"
 trap 'rm -f "$CREDENTIAL_FILE"' EXIT
-cat > "$CREDENTIAL_FILE" <<JSON
+
+configure_credential() {
+  local name="$1" subject="$2" existing=""
+  echo "Configuring federated credential $name for $subject..."
+  cat > "$CREDENTIAL_FILE" <<JSON
 {
-  "name": "$CREDENTIAL_NAME",
+  "name": "$name",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:$REPO:environment:$ENVIRONMENT",
+  "subject": "$subject",
   "description": "MonoBank GitHub Actions $ENVIRONMENT environment",
   "audiences": ["api://AzureADTokenExchange"]
 }
 JSON
-if [[ -n "$(az ad app federated-credential list --id "$APP_OBJECT_ID" \
-    --query "[?name=='$CREDENTIAL_NAME'].name | [0]" -o tsv)" ]]; then
-  az ad app federated-credential delete --id "$APP_OBJECT_ID" \
-    --federated-credential-id "$CREDENTIAL_NAME" --output none
-fi
-az ad app federated-credential create --id "$APP_OBJECT_ID" \
-  --parameters "@$CREDENTIAL_FILE" --output none
+  list_credential() {
+    existing="$(az ad app federated-credential list --id "$APP_OBJECT_ID" \
+      --query "[?name=='$name'].name | [0]" -o tsv)"
+  }
+  retry list_credential
+  if [[ -n "$existing" ]]; then
+    az ad app federated-credential delete --id "$APP_OBJECT_ID" \
+      --federated-credential-id "$name" --output none
+  fi
+  retry az ad app federated-credential create --id "$APP_OBJECT_ID" \
+    --parameters "@$CREDENTIAL_FILE" --output none
+}
+
+configure_credential "github-$ENVIRONMENT" \
+  "repo:$GH_OWNER/$GH_NAME:environment:$ENVIRONMENT"
+configure_credential "github-$ENVIRONMENT-ids" \
+  "repo:$GH_OWNER@$GH_OWNER_ID/$GH_NAME@$GH_REPO_ID:environment:$ENVIRONMENT"
 
 echo "Writing repository secrets and environment..."
 gh api --method PUT "repos/$REPO/environments/$ENVIRONMENT" --silent

@@ -3,19 +3,17 @@ targetScope = 'subscription'
 @description('Short environment name used in resource names.')
 param environmentName string = 'prod'
 
-@description('Azure region for the resource group and web app.')
+@description('Azure region for all resources.')
 param location string = 'westus2'
 
-@description('Globally unique web app base name. A deterministic suffix is added.')
+@description('Base name used in resource names. A deterministic suffix is added where global uniqueness is required.')
 param baseName string = 'monobank'
 
-@allowed([
-  'B1'
-  'S1'
-  'P0v3'
-])
-@description('Linux App Service Plan SKU. B1 is the economical always-on default.')
-param skuName string = 'B1'
+@description('Deploy the container app itself. Set false to create only the shared infrastructure (registry, environment) before the first image exists.')
+param deployApp bool = false
+
+@description('Full container image reference, e.g. myregistry.azurecr.io/monobank:sha. Required when deployApp is true.')
+param containerImage string = ''
 
 var suffix = uniqueString(subscription().id, environmentName, baseName)
 var resourceGroupName = 'rg-${baseName}-${environmentName}'
@@ -30,17 +28,22 @@ resource resourceGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   }
 }
 
-module appService 'appservice.bicep' = {
-  name: 'monobank-appservice'
+module containerApps 'containerapps.bicep' = {
+  name: 'monobank-containerapps'
   scope: resourceGroup
   params: {
     location: location
-    webAppName: toLower('${baseName}-${environmentName}-${suffix}')
-    planName: 'asp-${baseName}-${environmentName}'
-    skuName: skuName
+    registryName: toLower('${baseName}${suffix}')
+    environmentName: 'cae-${baseName}-${environmentName}'
+    logAnalyticsName: 'log-${baseName}-${environmentName}'
+    appName: '${baseName}-${environmentName}'
+    deployApp: deployApp
+    containerImage: containerImage
   }
 }
 
 output resourceGroupName string = resourceGroup.name
-output webAppName string = appService.outputs.webAppName
-output webAppUrl string = appService.outputs.webAppUrl
+output registryName string = containerApps.outputs.registryName
+output registryLoginServer string = containerApps.outputs.registryLoginServer
+output appName string = containerApps.outputs.appName
+output webAppUrl string = containerApps.outputs.appUrl

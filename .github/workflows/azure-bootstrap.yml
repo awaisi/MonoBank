@@ -2,7 +2,7 @@ name: Bootstrap Azure (one-time)
 
 # Creates the OIDC deployment identity used by azure-deploy.yml, writes the
 # AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID secrets, and
-# optionally provisions the Bicep infrastructure. Run manually from the
+# optionally provisions the shared Bicep infrastructure. Run manually from the
 # Actions tab. Safe to re-run.
 #
 # Required repository secrets (see README "One-time Azure/GitHub trust setup"):
@@ -17,13 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       provision_infra:
-        description: Also deploy infra/main.bicep (resource group + App Service)
+        description: Also create the shared infrastructure (resource group, registry, Container Apps environment)
         type: boolean
         default: true
       location:
-        description: Azure region
+        description: Azure region (blank = repository variable AZURE_LOCATION, else westus2)
         type: string
-        default: westus2
+        default: ''
 
 permissions:
   contents: read
@@ -71,16 +71,24 @@ jobs:
           SUB: ${{ secrets.BOOTSTRAP_AZURE_SUBSCRIPTION_ID }}
         run: infra/bootstrap-azure.sh "$GITHUB_REPOSITORY" "$SUB"
 
-      - name: Provision infrastructure (Bicep)
+      - name: Register resource providers
+        if: ${{ inputs.provision_infra }}
+        run: |
+          for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.OperationalInsights; do
+            az provider register --namespace "$ns" --wait
+          done
+
+      - name: Provision shared infrastructure (Bicep)
         if: ${{ inputs.provision_infra }}
         env:
-          LOCATION: ${{ inputs.location }}
+          LOCATION: ${{ inputs.location || vars.AZURE_LOCATION || 'westus2' }}
         run: |
+          echo "Provisioning in $LOCATION"
           az deployment sub create \
             --name "monobank-bootstrap-${GITHUB_RUN_ID}" \
             --location "$LOCATION" \
             --template-file infra/main.bicep \
-            --parameters location="$LOCATION" \
+            --parameters location="$LOCATION" deployApp=false \
             --query properties.outputs -o table
 
       - name: Sign out
