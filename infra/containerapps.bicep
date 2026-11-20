@@ -1,5 +1,6 @@
 param location string
 param registryName string
+param storageAccountName string
 param environmentName string
 param logAnalyticsName string
 param appName string
@@ -24,6 +25,8 @@ var customDomains = empty(customDomain) ? [] : [
 var tags = {
   application: 'MonoBank'
 }
+var gamesShareName = 'games'
+var gamesStorageName = 'games'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -55,6 +58,45 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
 }
 
+// Durable game storage: one JSON file per game on an Azure Files share,
+// mounted into the container at /data. The environment authenticates with
+// the account key (the Contributor-only deploy identity cannot assign roles).
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageAccountName
+  location: location
+  tags: tags
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: true
+  }
+}
+
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    shareDeleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+  }
+}
+
+resource gamesShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: fileService
+  name: gamesShareName
+  properties: {
+    shareQuota: 5
+    accessTier: 'TransactionOptimized'
+  }
+}
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -76,7 +118,21 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-// Games live in process memory, so run exactly one always-on replica.
+resource environmentStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  parent: environment
+  name: gamesStorageName
+  properties: {
+    azureFile: {
+      accountName: storage.name
+      accountKey: storage.listKeys().keys[0].value
+      shareName: gamesShare.name
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+
+// Games are cached in process memory with write-through to /data, so run
+// exactly one always-on replica.
 resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
   name: appName
   location: location
@@ -119,6 +175,14 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
           env: [
             { name: 'NODE_ENV', value: 'production' }
             { name: 'PORT', value: '3000' }
+            { name: 'DATA_DIR', value: '/data' }
+            { name: 'TRUST_PROXY', value: '1' }
+          ]
+          volumeMounts: [
+            {
+              volumeName: 'games'
+              mountPath: '/data'
+            }
           ]
           probes: [
             {
@@ -134,6 +198,15 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
           ]
         }
       ]
+      volumes: [
+        {
+          name: 'games'
+          storageType: 'AzureFile'
+          storageName: environmentStorage.name
+          // The image runs as the unprivileged `node` user (uid/gid 1000).
+          mountOptions: 'uid=1000,gid=1000,dir_mode=0700,file_mode=0600'
+        }
+      ]
       scale: {
         minReplicas: 1
         maxReplicas: 1
@@ -143,6 +216,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
 }
 
 output registryName string = registry.name
+output storageAccountName string = storage.name
 output registryLoginServer string = registry.properties.loginServer
 output appName string = appName
 output environmentName string = environment.name

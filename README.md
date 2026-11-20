@@ -19,8 +19,9 @@ MonoBank is a mobile-first, shared banking companion for a classic property-trad
 - **QR code** to join a game from another phone.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
-- Use an accessible responsive UI designed as a tableside game console, with one sticky header on every page: **Start a game** on the home page; on a game, a live badge with the game code plus **Share**, **QR code**, **Sound** and **End game**.
-- Keep sessions in server memory for 24 hours after the latest activity.
+- Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **End game**.
+- Games are saved durably and survive restarts and deploys; they expire after 24 hours of inactivity.
+- Built-in abuse protection: per-IP rate limits and a cap on active games.
 
 ## Run locally
 
@@ -53,8 +54,8 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ## Testing
 
 ```bash
-npm test           # 64 unit and API tests (node:test)
-npm run coverage   # same, with a coverage report — lib/game.mjs and public/qr.js are at 100% line coverage
+npm test           # 89 unit and API tests (node:test)
+npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs and public/qr.js are at 100% line coverage
 npm run e2e        # browser test of the main flows with Playwright (skipped if Playwright isn't installed)
 ```
 
@@ -65,12 +66,12 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 - **Undo:** the **↶ Undo** button (Activity panel and Activity tab) reverses the most recent action: payments, purchases, rent, mortgages, buildings, trades, jail, Free Parking, bankruptcy, or game over. Press it again to keep going back, up to 50 actions. Every action is also atomic: if it fails, nothing changes.
 - **Bankruptcy:** open the **Bankruptcy** card at the bottom of **Quick pay** and choose the bankrupt player and who they owe. A **What happens** preview spells out the settlement before you confirm (building sale proceeds, cash and deeds handed over, any debt written off, and whether this ends the game). Their houses and hotels are sold to the Bank at half price. Their cash (if positive) and deeds go to the creditor; mortgaged deeds stay mortgaged. If they owe the Bank, deeds return to the Bank unmortgaged. A negative balance is written off. The player leaves the game, and when only one player remains they win automatically.
 - **Net worth:** cash + deeds at list price (mortgaged deeds at their mortgage value) + houses and hotels at cost. It's shown on each player card.
-- **End game:** **★ End game** in the header declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
+- **End game:** **⋯ → End game** in the header declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
 
 ## Joining and feedback
 
-- **QR code:** **▦ QR code** in the header shows a scannable code for the game link. It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
-- **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **🔊 Sound** in the header turns this on or off for the current device (it shows **Muted** when off).
+- **QR code:** **Invite** in the header shows a scannable code for the game link. It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
+- **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **⋯ → Sound & vibration** in the header turns this on or off for the current device.
 
 ## House rules
 
@@ -90,17 +91,49 @@ Games created through the API without `rules` use the defaults above, which matc
 
 ## How sessions work
 
-A game is held only in the Node.js process memory and receives a random 16-character URL identifier. Anyone with that URL can make changes. Restarting or replacing the container removes all games; inactive games are removed after 24 hours. This is intentional for the current no-authentication, no-database release.
+Each game gets a random 16-character URL identifier. Anyone with that URL can make changes; there is no sign-in.
 
-Because Azure Container Apps restarts the container during deployments and platform maintenance, do not treat this version as durable storage. A future persistence layer should use Azure Cosmos DB, Table Storage, or another shared store before scaling beyond one instance.
+**Games are durable.** In production every game is saved as a JSON file on an Azure Files share mounted at `/data`. The file is written atomically after every action and loaded again on first use after a restart. Deploys, restarts and platform maintenance no longer lose games in progress, and undo history survives too. Games are deleted after **24 hours without activity**.
+
+The server keeps a working copy of each active game in memory and writes it through to disk, so it must run as **exactly one instance**. Running several replicas would need a shared database first.
+
+Locally, games stay in memory unless you set `DATA_DIR`:
+
+```bash
+DATA_DIR=./data npm run dev
+```
+
+If the data directory can't be created or read at startup, the server logs an error and falls back to memory, so the app stays up. `/health` reports which mode is active (`"storage": "file"` or `"memory"`), and the deploy pipeline refuses to call a deploy healthy unless it is `file`.
+
+## Abuse protection
+
+| Limit | Default | Response |
+| --- | --- | --- |
+| New games per client IP | 20 per hour | HTTP 429 with `Retry-After` |
+| API requests per client IP | 600 per minute (a busy table of 8 phones polling uses about 140) | HTTP 429 with `Retry-After` |
+| Active games | 5,000 (expired games are swept first) | HTTP 503 "at capacity" |
+| Request body | 64 KB | HTTP 413 |
+
+`/health` and static files are never rate limited. Behind Azure's ingress, the client IP comes from `X-Forwarded-For`; the header is trusted only when `TRUST_PROXY=1`, so it can't be spoofed locally.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port |
+| `DATA_DIR` | unset (memory) | Directory for game files; `/data` in production |
+| `MAX_GAMES` | `5000` | Active game cap |
+| `RATE_LIMIT_CREATE_PER_HOUR` | `20` | New games per IP per hour |
+| `RATE_LIMIT_API_PER_MINUTE` | `600` | API requests per IP per minute |
+| `TRUST_PROXY` | unset | Set to `1` behind a trusted reverse proxy to use `X-Forwarded-For` |
 
 ## Azure architecture
 
-- **Hosting:** Azure Container Apps (Consumption) running the `Dockerfile` image (Node.js 22 on Alpine). Exactly **one always-on replica** (0.25 vCPU, 0.5 GiB), because games live in process memory. Images are stored in Azure Container Registry (Basic); logs go to a Log Analytics workspace (30-day retention, 1 GB/day cap).
+- **Hosting:** Azure Container Apps (Consumption) running the `Dockerfile` image (Node.js 22 on Alpine). Exactly **one always-on replica** (0.25 vCPU, 0.5 GiB), because games live in process memory. Images are stored in Azure Container Registry (Basic); logs go to a Log Analytics workspace (30-day retention, 1 GB/day cap). Game files live on an **Azure Files** share (Standard LRS storage account, 5 GiB share, 7-day soft delete) mounted at `/data`.
 - **Infrastructure:** subscription-scoped Bicep in `infra/`
 - **Delivery:** GitHub Actions (`.github/workflows/azure-deploy.yml`) with Microsoft Entra workload identity federation (OIDC); no publish profile or long-lived Azure password
 - **Validation:** syntax checks, Node test suite, deployment, then `/health` verification
-- **Cost:** billable. The always-on replica uses more than the Container Apps monthly free grant, and Azure Container Registry Basic is billed daily; expect a few dollars to roughly $15 a month in total. Check the Azure pricing calculator for your region. Region defaults to `westus2`; override it with the repository variable `AZURE_LOCATION` (*Settings → Secrets and variables → Actions → Variables*).
+- **Cost:** billable. The always-on replica uses more than the Container Apps monthly free grant, Azure Container Registry Basic is billed daily, and the game file share adds a few cents. Expect a few dollars to roughly $15 a month in total. Check the Azure pricing calculator for your region. Region defaults to `westus2`; override it with the repository variable `AZURE_LOCATION` (*Settings → Secrets and variables → Actions → Variables*).
 - **Why not App Service:** new and trial subscriptions often have 0 App Service quota (`SubscriptionIsOverQuotaForSku`); Container Apps uses separate quota. If you change `AZURE_LOCATION` after `rg-monobank-prod` exists in another region, delete that resource group first.
 
 ### One-time Azure/GitHub trust setup
@@ -174,7 +207,8 @@ Every push to `main`:
 3. Signs into Azure with OIDC.
 4. Deploys the shared infrastructure in `infra/main.bicep` (resource group, registry, Log Analytics, Container Apps environment) idempotently.
 5. Builds the container image, pushes it to the registry tagged with the commit SHA, and deploys the container app with that image.
-6. Polls the public `/health` endpoint and fails if the app does not become healthy.
+6. Before deploying, creates a **persistence probe** game on the running app (once it reports file storage).
+7. Polls `/health` on both URLs until the new revision reports `"storage": "file"`, then checks that the probe game survived the deploy. Either failure fails the run.
 
 The workflow can also be run manually from **Actions → Build, test, and deploy to Azure**.
 
@@ -200,13 +234,15 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 
   Every action except `undo` is rejected once the game has ended, and any action naming a bankrupt player is rejected.
 
-- `GET /health` — container liveness/readiness probe and deployment verification
+- `GET /health` — container liveness/readiness probe and deployment verification: `{ "status": "ok", "service": "monobank", "storage": "file" | "memory" }`
+
+API errors use JSON `{ "error": "…" }` with status 400 (invalid input), 404 (unknown or expired game), 409 (stale revision), 413 (body too large), 429 (rate limited, with `Retry-After`), 503 (at capacity), or 500.
 
 The client sends an expected revision with each action. A stale browser receives HTTP 409 and refreshes instead of silently overwriting a newer transaction.
 
 ## Security and accessibility
 
-MonoBank sets a restrictive Content Security Policy (no inline scripts or style attributes; per-element colors are applied through the CSSOM) and related browser security headers, caps request bodies, validates all actions server-side, escapes player-provided text in the client, uses native dialog and form controls, supports keyboard focus, exposes labels and live notifications, provides strong contrast, adapts to reduced-motion preferences, and includes a 320px-friendly mobile layout.
+Static files are served with `Cache-Control: no-cache` and an `ETag`, so browsers revalidate (cheap 304s) and never mix a new page with stale CSS or JavaScript after a deploy. MonoBank sets a restrictive Content Security Policy (no inline scripts or style attributes; per-element colors are applied through the CSSOM) and related browser security headers, caps request bodies, validates all actions server-side, escapes player-provided text in the client, uses native dialog and form controls, supports keyboard focus, exposes labels and live notifications, provides strong contrast, adapts to reduced-motion preferences, and includes a 320px-friendly mobile layout.
 
 ## License
 

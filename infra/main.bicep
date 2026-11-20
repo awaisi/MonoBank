@@ -40,6 +40,7 @@ module containerApps 'containerapps.bicep' = {
   params: {
     location: location
     registryName: toLower('${baseName}${suffix}')
+    storageAccountName: toLower('mbst${suffix}')
     environmentName: 'cae-${baseName}-${environmentName}'
     logAnalyticsName: 'log-${baseName}-${environmentName}'
     appName: '${baseName}-${environmentName}'

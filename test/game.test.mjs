@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, calculateRent, performAction, GameStore, DEFAULT_RULES, normalizeRules } from '../lib/game.mjs';
+import { createGame, calculateRent, performAction, DEFAULT_RULES, normalizeRules } from '../lib/game.mjs';
+import { GameStore } from '../lib/store.mjs';
 import { createAppServer } from '../server.mjs';
 
 const makeGame = () => createGame({ players: ['Awais', 'Friend'], startingBalance: 1500 });

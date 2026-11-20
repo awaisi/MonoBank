@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAppServer } from '../server.mjs';
-import { GameStore } from '../lib/game.mjs';
+import { GameStore } from '../lib/store.mjs';
 
 async function startServer(t, store = new GameStore()) {
   const server = createAppServer({ store });
@@ -93,7 +93,16 @@ test('serves the app shell, static assets and security headers', async (t) => {
   assert.match(await gameRoute.text(), /Banker’s Console/);
   const script = await fetch(`${base}/qr.js`);
   assert.match(script.headers.get('content-type'), /text\/javascript/);
-  assert.match(script.headers.get('cache-control'), /max-age=3600/);
+  assert.equal(script.headers.get('cache-control'), 'no-cache', 'assets are revalidated after every deploy');
+  const etag = script.headers.get('etag');
+  assert.match(etag, /^"[\w-]+"$/);
+  const revalidated = await fetch(`${base}/qr.js`, { headers: { 'if-none-match': etag } });
+  assert.equal(revalidated.status, 304);
+  assert.equal(await revalidated.text(), '');
+  const stale = await fetch(`${base}/qr.js`, { headers: { 'if-none-match': '"old"' } });
+  assert.equal(stale.status, 200);
+  const versioned = await fetch(`${base}/styles.css?v=3`);
+  assert.equal(versioned.status, 200, 'cache-busting query strings are ignored by the router');
   const manifest = await fetch(`${base}/manifest.webmanifest`);
   assert.match(manifest.headers.get('content-type'), /manifest\+json/);
 });
@@ -104,18 +113,4 @@ test('blocks path traversal outside public/', async (t) => {
     const response = await fetch(`${base}${path}`);
     assert.notEqual(response.status, 200, path);
   }
-});
-
-test('GameStore expires idle games on read and on sweep', () => {
-  const store = new GameStore({ ttlMs: 1000 });
-  const fresh = store.create({ players: ['A', 'B'] });
-  const stale = store.create({ players: ['C', 'D'] });
-  assert.equal(store.get(fresh.id), fresh);
-  stale.updatedAt = new Date(Date.now() - 5000).toISOString();
-  assert.throws(() => store.get(stale.id), (error) => error.status === 404);
-  const swept = store.create({ players: ['E', 'F'] });
-  swept.updatedAt = new Date(Date.now() - 5000).toISOString();
-  store.sweep();
-  assert.equal(store.games.has(swept.id), false);
-  assert.equal(store.games.has(fresh.id), true);
 });

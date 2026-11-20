@@ -11,7 +11,7 @@
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check lib/game.mjs && node --check public/app.js && node --check public/qr.js",
+    "check": "node --check server.mjs && node --check lib/game.mjs && node --check lib/store.mjs && node --check lib/rate-limit.mjs && node --check public/app.js && node --check public/qr.js",
     "coverage": "node --test --experimental-test-coverage",
     "e2e": "node --test e2e/ui.e2e.mjs"
   }

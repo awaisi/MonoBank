@@ -140,6 +140,24 @@ jobs:
           echo "domain=$CUSTOM_DOMAIN" >> "$GITHUB_OUTPUT"
           echo "certificateId=$cert_id" >> "$GITHUB_OUTPUT"
 
+      - name: Persistence probe (before deploy)
+        id: probe
+        env:
+          APP_URL: https://${{ steps.infra.outputs.appName }}.${{ steps.infra.outputs.environmentDefaultDomain }}
+        run: |
+          # Create a game on the running app so we can prove it survives the
+          # redeploy. Skipped until the running app persists games to disk.
+          storage=$(curl -fsS --max-time 10 "$APP_URL/health" | jq -r '.storage // "none"' || true)
+          echo "Running app storage: ${storage:-unreachable}"
+          if [ "$storage" != "file" ]; then
+            echo "Skipping persistence probe: the running app does not persist games yet."
+            exit 0
+          fi
+          id=$(curl -fsS --max-time 10 -X POST -H 'content-type: application/json' \
+            -d '{"players":["Deploy probe A","Deploy probe B"]}' "$APP_URL/api/games" | jq -r .id)
+          echo "Created probe game $id"
+          echo "gameId=$id" >> "$GITHUB_OUTPUT"
+
       - name: Deploy container app (Bicep)
         id: app
         env:
@@ -172,23 +190,36 @@ jobs:
             --validation-method CNAME \
             --output none
 
-      - name: Verify /health
+      - name: Verify /health and durable storage
         env:
           DOMAIN: ${{ steps.domain.outputs.domain }}
+          APP_URL: ${{ steps.app.outputs.webAppUrl }}
+          PROBE_GAME: ${{ steps.probe.outputs.gameId }}
         run: |
+          # Wait until the new revision answers and reports file storage
+          # (the old revision may answer for a few seconds after the deploy).
           check() {
-            local url="$1/health"
+            local url="$1/health" body
             for i in $(seq 1 30); do
-              if curl -fsS --max-time 10 "$url"; then
-                echo; echo "Healthy: $url"; return 0
+              if body=$(curl -fsS --max-time 10 "$url") && [ "$(jq -r .storage <<<"$body")" = "file" ]; then
+                echo "$body"; echo "Healthy with durable storage: $url"; return 0
               fi
-              echo "Attempt $i: not healthy yet ($url)"; sleep 10
+              echo "Attempt $i: not ready yet ($url) ${body:-}"; sleep 10
             done
-            echo "App did not become healthy at $url" >&2
+            echo "App did not become healthy with file storage at $url" >&2
             return 1
           }
-          check "${{ steps.app.outputs.webAppUrl }}"
+          check "$APP_URL"
           if [ -n "$DOMAIN" ]; then
             check "https://$DOMAIN"
             echo "### Custom domain: https://$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$PROBE_GAME" ]; then
+            if curl -fsS --max-time 10 "$APP_URL/api/games/$PROBE_GAME" > /dev/null; then
+              echo "Probe game $PROBE_GAME survived the deploy."
+              echo "Durable storage verified: a game created before the deploy survived it." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Probe game $PROBE_GAME was lost during the deploy." >&2
+              exit 1
+            fi
           fi
