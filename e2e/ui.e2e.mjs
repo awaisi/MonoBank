@@ -419,16 +419,37 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await viewer.close();
   });
 
+  await t.test('finishes the game early with a winner the table picks', async () => {
+    await page.click('#menu-button');
+    assert.equal(await page.textContent('#end-game'), '★Finish game…');
+    await page.click('#end-game');
+    await page.waitForSelector('#end-dialog[open] #end-form');
+    const choices = await page.$$eval('#end-form .winner-option strong', (items) => items.map((item) => item.textContent));
+    assert.equal(choices[0], 'Highest net worth');
+    assert.ok(!choices.includes('Ana'), 'bankrupt players cannot be picked');
+    assert.match(await page.textContent('#end-submit-label'), /End game · Cy wins/);
+    await page.click('#end-form .winner-option:has-text("Ben")');
+    assert.equal(await page.textContent('#end-submit-label'), 'End game · Ben wins');
+    await page.click('#end-form button[type=submit]');
+    await page.waitForSelector('#results-dialog[open]');
+    assert.equal(await page.isVisible('#end-dialog'), false);
+    assert.match(await page.textContent('#results-title'), /Ben wins/);
+    assert.match(await page.textContent('#ended-text'), /Game over: Ben wins/);
+    await page.click('[data-undo-results]');
+    await page.waitForSelector('#ended-banner', { state: 'hidden' });
+  });
+
   await t.test('ends the game and shows results, then undoes game over', async () => {
     await page.click('#menu-button');
     await page.click('#end-game');
+    await page.waitForSelector('#end-dialog[open] #end-form');
+    await page.click('#end-form button[type=submit]');
     await page.waitForSelector('#results-dialog[open]');
     assert.match(await page.textContent('#results-title'), /Cy wins/);
     assert.equal(await page.$$eval('.results-table tbody tr', (rows) => rows.length), 3);
     assert.equal(await page.isVisible('#ended-banner'), true);
     await page.click('[data-undo-results]');
-    await toast('Back in play.');
-    assert.equal(await page.isVisible('#ended-banner'), false);
+    await page.waitForSelector('#ended-banner', { state: 'hidden' });
     assert.equal(await page.isEnabled('#payment-form button[type=submit]'), true);
   });
 
