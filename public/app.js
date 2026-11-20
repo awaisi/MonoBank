@@ -796,14 +796,23 @@ function endGame() {
   if (!$('#end-dialog').open) $('#end-dialog').showModal();
 }
 
+// Play time comes from the server: first move to the last move before Finish game (not when the game was created or closed).
+function playTimeText(time) {
+  if (!time?.startedAt) return 'No moves played';
+  const { minutes } = time;
+  const length = minutes < 1 ? 'Under a minute' : minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+  const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `Played ${length.replace(/^Under/, 'under')} (${clock(time.startedAt)}–${clock(time.endedAt)})`;
+}
+
 function openResults() {
   const rows = game.standings || [];
   const rentBy = {};
   game.transactions.filter((item) => item.type === 'rent' && !item.undone).forEach((item) => { rentBy[item.toId] = (rentBy[item.toId] || 0) + item.amount; });
-  const minutes = Math.max(1, Math.round((new Date(game.endedAt || Date.now()) - new Date(game.createdAt)) / 60000));
+  const played = playTimeText(game.playTime);
   const table = rows.map((row) => `<tr class="${game.winnerIds.includes(row.playerId) ? 'winner-row' : ''}"><td>${row.bankrupt ? '—' : row.rank}</td><td>${escapeHtml(row.name)}${row.bankrupt ? ' <small>bankrupt</small>' : ''}</td><td>${money.format(row.cash)}</td><td>${money.format(row.property)}</td><td>${money.format(row.buildings)}</td><td><strong>${money.format(row.total)}</strong></td></tr>`).join('');
   const rentLeader = Object.entries(rentBy).sort((a, b) => b[1] - a[1])[0];
-  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${minutes} minute${minutes === 1 ? '' : 's'} · ${game.transactions.length} transactions${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
+  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${played} · ${game.transactions.length} transactions${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
   $('[data-undo-results]', $('#results-content'))?.addEventListener('click', async () => {
     if (await submitAction({ type: 'undo' }, 'Back in play.')) $('#results-dialog').close();
   });
