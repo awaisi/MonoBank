@@ -17,14 +17,13 @@ Live at **https://monobank.divviq.app**.
 - Track who is in jail, and run a Free Parking pot with its own balance and one-tap payout.
 - **Undo** the last action (and keep going back), with undone entries struck through in the activity feed.
 - **Bankruptcy**: hand a player's cash and deeds to their creditor or the Bank; the last player standing wins.
-- **Net worth** on every player card, and an **End game** results screen with final standings.
+- **Net worth** in each player's sheet, and an **End game** results screen with final standings.
 - **No overdrafts:** a player can't spend more than they have. MonoBank shows how much is missing and offers to mortgage deeds or sell buildings first, or to declare bankruptcy.
-- **Balances on every tab:** a compact strip of every player's balance stays pinned at the top of Quick pay, Deeds, Trade and Activity.
+- **One players bar:** a single compact row of every player's balance stays pinned under the header on every tab. Tap a player for their sheet (net worth, deeds, quick actions). On **Deeds** the same bar filters deeds by owner.
 - **Activity filter:** show one player's (or the Bank's) transactions.
-- **Deed owner pills:** filter the Deeds tab by owner (All, each player with their deed count, or Bank for unowned deeds).
 - **QR code** to join a game from another phone.
 - **Live on every phone:** payments appear on every device the moment they happen (server-sent events, with polling as a fallback).
-- **"This phone is me":** each device picks its player (or the banker) for a personal view: your balance first, a **You** badge, and your name pre-filled.
+- **"This phone is me":** each device picks its player (or the banker) for a personal view: your chip first in the players bar, and your name pre-filled.
 - **Spectator link:** a separate view-only link and QR code for people watching the game; it can't change anything and never reveals the game's edit link.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
@@ -65,7 +64,7 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ```bash
 npm test           # 116 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # 28 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run e2e        # 30 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available.
@@ -74,18 +73,19 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 
 - **Undo:** the **↶ Undo** button (Activity panel and Activity tab) reverses the most recent action: payments, purchases, rent, mortgages, buildings, trades, jail, Free Parking, bankruptcy, or game over. Press it again to keep going back, up to 50 actions. Every action is also atomic: if it fails, nothing changes.
 - **Bankruptcy:** open the **Bankruptcy** card at the bottom of **Quick pay** and choose the bankrupt player and who they owe. A **What happens** preview spells out the settlement before you confirm (building sale proceeds, cash and deeds handed over, any debt written off, and whether this ends the game). Their houses and hotels are sold to the Bank at half price. Their cash (if positive) and deeds go to the creditor; mortgaged deeds stay mortgaged. If they owe the Bank, deeds return to the Bank unmortgaged. A negative balance is written off. The player leaves the game, and when only one player remains they win automatically.
-- **Net worth:** what a player's holdings are worth to them right now: cash + deeds at list price (a mortgaged deed counts at list price minus what it costs to unmortgage it) + houses and hotels at what the Bank pays back for them (half price). Reversible moves leave it unchanged (build then sell a house, mortgage then unmortgage), and their real costs show up immediately: a $200 house is worth $100, and mortgaging Boardwalk counts the $20 interest owed. It's shown on each player card, the "Playing as" bar and the results screen.
+- **Net worth:** what a player's holdings are worth to them right now: cash + deeds at list price (a mortgaged deed counts at list price minus what it costs to unmortgage it) + houses and hotels at what the Bank pays back for them (half price). Reversible moves leave it unchanged (build then sell a house, mortgage then unmortgage), and their real costs show up immediately: a $200 house is worth $100, and mortgaging Boardwalk counts the $20 interest owed. It's shown on each player sheet and the results screen.
 - **No negative balances:** every payment (transfers, taxes, Free Parking, rent, purchases and auctions, unmortgaging, houses and hotels, the cash side of a trade) needs the payer to have the money. Paying exactly everything is fine. If they're short, nothing changes and a **Raise cash first** dialog shows the shortfall with one-tap **Sell** (buildings, half price, evenly) and **Mortgage** buttons. Once there's enough, it says to try the payment again. If selling everything still isn't enough, it suggests **Declare bankruptcy**, which opens the bankruptcy card for that player. A hotel can never be bought on credit. Games saved before this rule may still show a negative balance; it's written off on bankruptcy.
 - **End game:** **⋯ → End game** in the header declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
 
 ## Joining and feedback
 
-- **Balances everywhere:** a strip of every player's balance (and the Free Parking pot) sits at the top of every tab and stays pinned under the header while you scroll. On phones, the tabs scroll the player cards out of view.
-- **Your name first:** once a phone has picked its player, that player comes first in the player cards, the balance strip, every player list and the activity filter.
+- **Players bar:** one row of chips (token, name, balance; plus the Free Parking pot when that rule is on) sits pinned under the header on every tab and scrolls sideways with many players. It replaces the old player cards, balance strip and owner pills, so the console starts right below it.
+- **Player sheet:** tap a chip to see that player's cash, net worth and how much they could raise, the net-worth breakdown and their deeds, with shortcuts: **Show deeds**, **Pay from …**, **This is me**, and **Send to jail / Release** when the no-rent-in-jail rule is on. Tap the Free Parking chip to pay out the pot.
+- **Your name first:** once a phone has picked its player, that player comes first in the players bar, every player list and the activity filter.
 - **Paying rent:** open an owned deed, choose **Who pays rent?** and tap **Pay rent to Ana**. The owner is never offered as the payer.
-- **Deed owner pills:** on **Deeds**, tap **All**, a player (with their color and deed count) or **Bank** to see only those deeds. Pills combine with the search box and the status filter (available, owned, mortgaged, mine).
+- **Filter deeds by owner:** on **Deeds**, the players bar turns into an owner filter: tap **All**, a player (with their deed count) or **Bank** to see only those deeds. It combines with the search box and the status filter (available, owned, mortgaged).
 - **Activity filter:** **Activity → Show** narrows the feed to one player or the Bank (transactions they paid or received).
-- **Who's on this phone:** the first time a device opens a game, it asks *"Who's playing on this phone?"*. Pick a player or **I'm the banker**. The choice is remembered on that device for that game. It shows **Playing as Ana · $1,200 · net worth $1,600** under the title, marks your card **You**, pre-fills *From* in payments, *Player one* in trades, the buyer in the deed desk and the payer when collecting rent, and adds a **My deeds** filter. Change it any time with **Switch** or **⋯ → Switch player…**. It's a convenience view: every device can still bank for anyone, as at a real table.
+- **Who's on this phone:** the first time a device opens a game, it asks *"Who's playing on this phone?"*. Pick a player or **I'm the banker**. The choice is remembered on that device for that game. It shows **Playing as Ana** next to the house rules, puts your chip first in the players bar (marked *you*), and pre-fills *From* in payments, *Player one* in trades, the buyer in the deed desk and the payer when collecting rent. Tap your own chip on **Deeds** to see only your deeds. Change it any time with **Switch** or **⋯ → Switch player…**. It's a convenience view: every device can still bank for anyone, as at a real table.
 - **Live updates:** every game screen keeps a live connection to the server. When anyone acts, every phone and spectator updates within a moment, with a short chime. The dot in the game code turns amber while reconnecting, and the app falls back to checking every few seconds until the live connection returns.
 - **Spectators:** **Invite → Spectators** (or **⋯ → Copy spectator link**) gives a `/watch/<token>` link and QR code. Spectators see balances, deeds, standings and activity live, but get no payment, trade, bankruptcy, undo or end-game controls, and the server has no write route for spectator links. The spectator token is separate from the game ID, so a spectator can't work out the player link.
 - **QR code:** **Invite** in the header shows a scannable code for the player link (or the spectator link). It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
@@ -100,7 +100,7 @@ Open **House rules** on the new-game screen to choose how your table plays. Rule
 | Free Parking jackpot | Off | Adds a **Free Parking pot** account. The Jail, Tax and Luxury shortcuts pay into it, and any payment can target it. A pot card shows the balance and a **Collect** button for whoever lands on Free Parking. |
 | Seed the pot | $0 | With the jackpot on, the Bank puts this amount in the pot at the start and again after every collection (a common choice is $500). |
 | $400 for landing on GO | Off | Adds a **Land on GO +$400** shortcut alongside the usual **GO +$200**. |
-| No rent while in jail | Off | Adds **Send to jail / Release from jail** to each player card. A jailed owner cannot collect rent. |
+| No rent while in jail | Off | Adds **Send to jail / Release from jail** to each player's sheet (a 🔒 marks jailed players in the bar). A jailed owner cannot collect rent. |
 | Auctions | On | Off: unbought deeds can only be bought at list price; the auction option disappears. |
 | Even building | On | Off: houses can be built and sold unevenly across a color set (owning the full set is still required). |
 | Mortgage interest | 10% | Interest added when unmortgaging, from 0% to 100%. |

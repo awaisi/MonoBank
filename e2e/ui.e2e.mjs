@@ -28,7 +28,8 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   page.on('console', (message) => { if (message.type() === 'error' && !expectedRejection(message.text())) errors.push(message.text()); });
   page.on('dialog', (dialog) => dialog.accept());
   const toast = (text) => page.waitForSelector(`.toast:has-text("${text}")`);
-  const balances = () => page.$$eval('#player-cards .player-card .balance', (cards) => cards.map((card) => card.textContent));
+  // Balances as shown in the players bar (outside the Deeds tab, where it filters deeds instead).
+  const balances = () => page.$$eval('#players-bar .player-chip:not(.plain) .chip-text b', (chips) => chips.map((chip) => chip.textContent));
 
   await t.test('home header shows only the brand', async () => {
     await page.goto(base);
@@ -76,7 +77,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.click('#identity-options [data-identity="banker"]');
     await toast('This phone is the banker.');
     assert.match(await page.textContent('#me-text'), /Banker view/);
-    assert.equal(await page.isVisible('.you-badge'), false);
+    assert.equal(await page.$('#players-bar .player-chip.is-me'), null);
   });
 
   await t.test('game pages keep the disclaimer and get their own title', async () => {
@@ -108,7 +109,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   });
 
   await t.test('player colors render through the CSP-safe path', async () => {
-    const color = await page.$eval('.player-card', (card) => getComputedStyle(card).getPropertyValue('--player-color').trim());
+    const color = await page.$eval('#players-bar .player-chip', (chip) => getComputedStyle(chip).getPropertyValue('--player-color').trim());
     assert.equal(color, '#d9574f');
   });
 
@@ -129,7 +130,37 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.click('[data-property-id=boardwalk]');
     await page.click('#buy-deed-form button[type=submit]');
     await toast('Deed acquired.');
-    assert.match(await page.textContent('.player-card .player-meta'), /1 deed · Net worth \$1,500/);
+    await page.click('[data-view=pay]');
+    await page.click('#players-bar [data-player]:has-text("Ana")');
+    await page.waitForSelector('#player-dialog[open]');
+    assert.equal(await page.textContent('#player-title'), 'Ana');
+    assert.match(await page.textContent('#player-dialog .dialog-facts'), /Cash\$1,100Net worth\$1,500Can raise\$200/);
+    assert.match(await page.textContent('#player-dialog .sheet-deeds'), /Boardwalk/);
+    await page.click('#player-dialog [data-close-dialog]');
+  });
+
+  await t.test('player sheet shortcuts: show deeds, pay from, Free Parking', async () => {
+    await page.click('#players-bar [data-player]:has-text("Ana")');
+    await page.click('#player-dialog [data-sheet="deeds"]');
+    assert.equal(await page.isVisible('#deeds-view'), true);
+    assert.equal(await page.getAttribute('#players-bar [data-owner].active', 'aria-pressed'), 'true');
+    assert.deepEqual(await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent)), ['Boardwalk']);
+    await page.click('#players-bar [data-owner="all"]');
+    await page.click('[data-view=pay]');
+    await page.click('#players-bar [data-player]:has-text("Cy")');
+    await page.click('#player-dialog [data-sheet="pay"]');
+    assert.equal(await page.$eval('#payment-from', (select) => select.selectedOptions[0].textContent), 'Cy');
+    await page.click('#players-bar [data-parking]');
+    await page.waitForSelector('#player-dialog[open] #parking-form');
+    assert.match(await page.textContent('#player-dialog .sheet-total'), /\$100/);
+    await page.selectOption('#parking-winner', { label: 'Ben' });
+    await page.click('#parking-form button[type=submit]');
+    await toast('Ben collected Free Parking.');
+    await page.waitForFunction(() => document.querySelector('#players-bar [data-player]:nth-child(2) b')?.textContent === '$1,600');
+    assert.deepEqual(await balances(), ['$1,100', '$1,600', '$1,500', '$100'], 'the seeded pot refills after a collect');
+    await page.click('.activity-panel [data-undo]');
+    await page.waitForFunction(() => document.querySelector('#players-bar [data-player]:nth-child(2) b')?.textContent === '$1,500');
+    await page.selectOption('#payment-from', { label: 'Ana' });
   });
 
   await t.test('"this phone is me" personalises the view and is remembered', async () => {
@@ -137,14 +168,13 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.click('#switch-player');
     await page.click('#identity-options .identity-option:has-text("Ana")');
     await toast('This phone is Ana.');
-    assert.match(await page.textContent('#me-text'), /Playing as Ana · \$1,100 · net worth \$1,500/);
-    assert.equal(await page.textContent('.player-card.is-me strong'), 'Ana');
-    assert.equal(await page.textContent('.player-card.is-me .you-badge'), 'You');
+    assert.match(await page.textContent('#me-text'), /Playing as Ana/);
+    assert.equal(await page.textContent('#players-bar .player-chip.is-me small'), 'Ana · you');
     assert.equal(await page.$eval('#payment-from', (select) => select.selectedOptions[0].textContent), 'Ana');
     await page.click('[data-view=deeds]');
-    await page.selectOption('#deed-filter', 'mine');
+    await page.click('#players-bar .player-chip.is-me');
     assert.deepEqual(await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent)), ['Boardwalk']);
-    await page.selectOption('#deed-filter', 'all');
+    await page.click('#players-bar [data-owner="all"]');
     await page.reload();
     await page.waitForSelector('#game-screen:not([hidden])');
     assert.equal(await page.isVisible('#identity-dialog[open]'), false, 'choice remembered on this device');
@@ -156,10 +186,10 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.click('#switch-player');
     await page.click('#identity-options .identity-option:has-text("Cy")');
     await toast('This phone is Cy.');
-    const firstCard = await page.$eval('#player-cards .player-card strong', (name) => name.textContent);
-    const strip = await page.$$eval('#balance-strip .balance-chip small', (chips) => chips.map((chip) => chip.textContent));
+    const firstCard = await page.$eval('#players-bar .player-chip small', (name) => name.textContent);
+    const strip = await page.$$eval('#players-bar .player-chip small', (chips) => chips.map((chip) => chip.textContent));
     const fromOptions = await page.$$eval('#payment-from option', (options) => options.map((option) => option.textContent));
-    assert.equal(firstCard, 'Cy');
+    assert.equal(firstCard, 'Cy · you');
     assert.deepEqual(strip.slice(0, 3), ['Cy · you', 'Ana', 'Ben']);
     assert.deepEqual(fromOptions.slice(0, 3), ['The Bank', 'Cy', 'Ana']);
     await page.click('#me-switch');
@@ -170,8 +200,8 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   await t.test('shows player balances at the top of every tab', async () => {
     for (const view of ['pay', 'deeds', 'trade', 'ledger']) {
       await page.click(`.view-tabs [data-view="${view}"]`);
-      assert.equal(await page.isVisible('#balance-strip'), true, view);
-      assert.match(await page.textContent('#balance-strip'), /Ana · you\$1,100.*Ben\$1,500.*Cy\$1,500/, view);
+      assert.equal(await page.isVisible('#players-bar'), true, view);
+      assert.match(await page.textContent('#players-bar'), /Ana · you\$1,100.*Ben\$1,500.*Cy\$1,500/, view);
     }
     const phone = await browser.newPage({ viewport: { width: 375, height: 740 } });
     await phone.goto(page.url());
@@ -179,7 +209,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await phone.click('#mobile-nav [data-mobile-view="deeds"]');
     await phone.evaluate(() => scrollTo(0, document.body.scrollHeight / 2));
     await phone.waitForTimeout(300);
-    const top = await phone.$eval('#balance-strip', (strip) => strip.getBoundingClientRect().top);
+    const top = await phone.$eval('#players-bar', (strip) => strip.getBoundingClientRect().top);
     assert.ok(top >= 0 && top < 120, `balance strip stays pinned under the header while scrolling (top ${top})`);
     await phone.close();
     await page.click('.view-tabs [data-view="pay"]');
@@ -195,7 +225,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.selectOption('#rent-payer', { label: 'Ben' });
     await page.click('#rent-form button[type=submit]');
     await toast('Rent paid to Ana.');
-    assert.match(await page.textContent('#balance-strip'), /Ana · you\$1,150.*Ben\$1,450/);
+    assert.match(await page.textContent('#players-bar'), /Ana · you\$1,150.*Ben\$1,450/);
     await page.click('.activity-panel [data-undo]');
     await toast('Last action undone.');
   });
@@ -216,21 +246,22 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
 
   await t.test('filters deeds by owner with player pills', async () => {
     await page.click('.view-tabs [data-view="deeds"]');
-    const pills = await page.$$eval('#owner-pills .owner-pill', (items) => items.map((item) => item.textContent));
-    assert.deepEqual(pills, ['All28', 'MAna (you)1', 'RBen0', 'TCy0', '$Bank27']);
-    assert.equal(await page.getAttribute('#owner-pills [data-owner="all"]', 'aria-pressed'), 'true');
-    await page.click('#owner-pills .owner-pill:has-text("Ana (you)")');
+    assert.equal(await page.textContent('#players-bar .bar-label'), 'Deeds', 'the players bar turns into the owner filter');
+    const pills = await page.$$eval('#players-bar .player-chip', (items) => items.map((item) => item.textContent));
+    assert.deepEqual(pills, ['All28', 'MAna · you$1,1001', 'RBen$1,5000', 'TCy$1,5000', 'Bank27']);
+    assert.equal(await page.getAttribute('#players-bar [data-owner="all"]', 'aria-pressed'), 'true');
+    await page.click('#players-bar .player-chip.is-me');
     assert.deepEqual(await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent)), ['Boardwalk']);
-    assert.equal(await page.getAttribute('#owner-pills .owner-pill:has-text("Ana (you)")', 'aria-pressed'), 'true');
-    await page.click('#owner-pills [data-owner="bank"]');
+    assert.equal(await page.getAttribute('#players-bar .player-chip.is-me', 'aria-pressed'), 'true');
+    await page.click('#players-bar [data-owner="bank"]');
     assert.equal(await page.$$eval('#deed-grid .deed-card', (cards) => cards.length), 27);
     await page.fill('#deed-search', 'avenue');
     const avenues = await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent));
     assert.ok(avenues.length > 0 && avenues.every((name) => /Avenue/.test(name)), 'pills combine with search');
     await page.fill('#deed-search', '');
-    await page.click('#owner-pills .owner-pill:has-text("Ben")');
+    await page.click('#players-bar [data-owner]:has-text("Ben")');
     assert.match(await page.textContent('#deed-grid'), /No deeds match this filter/);
-    await page.click('#owner-pills [data-owner="all"]');
+    await page.click('#players-bar [data-owner="all"]');
     assert.equal(await page.$$eval('#deed-grid .deed-card', (cards) => cards.length), 28);
     await page.click('.view-tabs [data-view="pay"]');
   });
@@ -245,13 +276,13 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.match(await page.textContent('.raise-status'), /Ana has \$1,100 and needs \$1,200: raise \$100 more/);
     assert.match(await page.textContent('.raise-list'), /Boardwalk.*Mortgage \+\$200/);
     assert.equal(await page.isVisible('[data-raise-bankrupt]'), true);
-    assert.match(await page.textContent('#balance-strip'), /Ana · you\$1,100/, 'no money moved');
+    assert.match(await page.textContent('#players-bar'), /Ana · you\$1,100/, 'no money moved');
     await page.click('[data-raise="mortgage"][data-property="boardwalk"]');
     await page.waitForSelector('.raise-status.ok');
     assert.match(await page.textContent('.raise-status'), /Ana now has \$1,300, enough for the \$1,200 payment/);
     await page.click('#raise-dialog .secondary-button[data-close-dialog]');
     await page.click('.activity-panel [data-undo]');
-    await page.waitForFunction(() => /Ana · you\$1,100/.test(document.querySelector('#balance-strip').textContent));
+    await page.waitForFunction(() => /Ana · you\$1,100/.test(document.querySelector('#players-bar').textContent));
     await page.fill('#payment-amount', '');
   });
 
@@ -268,7 +299,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(stepLayout, 1, 'each step is one text block beside its number');
     await page.click('#bankrupt-form button[type=submit]');
     await toast('Ana is out of the game.');
-    assert.equal(await page.isVisible('.player-card.bankrupt'), true);
+    assert.equal(await page.isVisible('#players-bar .player-chip.bankrupt'), true);
     assert.deepEqual(await balances(), ['Bankrupt', '$1,500', '$2,600', '$100']);
     const fromOptions = await page.$$eval('#payment-from option', (options) => options.map((option) => option.textContent));
     assert.equal(fromOptions.includes('Ana'), false);
@@ -302,7 +333,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.click('#payment-form button[type=submit]');
     await toast('Funds transferred.');
   };
-  const balanceShown = (other, value) => other.waitForFunction((expected) => [...document.querySelectorAll('#player-cards .balance')].some((element) => element.textContent === expected), value, { timeout: 2500 });
+  const balanceShown = (other, value) => other.waitForFunction((expected) => [...document.querySelectorAll('#players-bar .chip-text b')].some((element) => element.textContent === expected), value, { timeout: 2500 });
 
   await t.test('updates other devices instantly over the live stream', async () => {
     const other = await browser.newPage();
@@ -412,9 +443,8 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(await big.$$eval('#identity-options [data-identity]', (options) => options.length), 9);
     assert.equal(await big.$eval('#identity-options', (list) => list.classList.contains('many')), true, 'two-column picker');
     await big.click('#identity-options [data-identity="banker"]');
-    assert.equal(await big.$$eval('#player-cards .player-card', (cards) => cards.length), 8);
-    assert.equal(await big.$eval('#player-cards', (grid) => grid.classList.contains('crowded')), true);
-    const cardColors = await big.$$eval('#player-cards .player-card', (cards) => cards.map((card) => getComputedStyle(card).getPropertyValue('--player-color').trim()));
+    assert.equal(await big.$$eval('#players-bar [data-player]', (chips) => chips.length), 8);
+    const cardColors = await big.$$eval('#players-bar [data-player]', (chips) => chips.map((chip) => getComputedStyle(chip).getPropertyValue('--player-color').trim()));
     assert.equal(new Set(cardColors).size, 8);
     assert.equal(await big.$$eval('#payment-from option', (options) => options.length), 9, 'bank + 8 players');
     for (const width of [375, 320]) {
