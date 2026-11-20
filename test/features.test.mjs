@@ -139,13 +139,12 @@ test('bankruptcy to the Bank returns deeds unowned and unmortgaged', () => {
   assert.equal(game.transactions[0].toId, 'bank');
 });
 
-test('a negative balance is written off rather than taken from the creditor', () => {
+test('a negative balance from an older saved game is written off, not taken from the creditor', () => {
   const game = makeGame();
   const [ana, ben] = game.players;
-  act(game, { type: 'transfer', fromId: ana.id, toId: ben.id, amount: 1800 });
-  assert.equal(ana.balance, -300);
+  ana.balance = -300; // balances can no longer go negative; older saved games may still have one
   act(game, { type: 'bankrupt', playerId: ana.id, creditorId: ben.id });
-  assert.equal(ben.balance, 3300);
+  assert.equal(ben.balance, 1500);
   assert.equal(game.transactions[0].amount, null);
 });
 
@@ -192,9 +191,10 @@ test('undoing a bankruptcy brings the player back with their assets', () => {
 
 // ------------------------------------------------- net worth & end game ----
 
-test('net worth counts cash, deeds (mortgaged at mortgage value) and buildings at cost', () => {
+test('net worth values deeds at list price, mortgaged deeds net of payoff, and buildings at resale', () => {
   const game = makeGame(['Ana', 'Ben']);
   const [ana] = game.players;
+  act(game, { type: 'transfer', fromId: 'bank', toId: ana.id, amount: 2000 });
   act(game, { type: 'buy', playerId: ana.id, propertyId: 'park-place' });
   act(game, { type: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
   act(game, { type: 'buy', playerId: ana.id, propertyId: 'water-works' });
@@ -205,11 +205,37 @@ test('net worth counts cash, deeds (mortgaged at mortgage value) and buildings a
   }
   const worth = netWorth(game, ana);
   assert.equal(worth.deeds, 3);
-  assert.equal(worth.property, 350 + 400 + 75);
-  assert.equal(worth.buildings, 10 * 200, 'two hotels at five houses each');
+  assert.equal(worth.property, 350 + 400 + (150 - Math.round(75 * 1.1)), 'Water Works counts net of the $83 payoff');
+  assert.equal(worth.buildings, 10 * 100, 'two hotels at half of five houses each');
   assert.equal(worth.cash, ana.balance);
-  assert.equal(worth.total, ana.balance + 825 + 2000);
+  assert.equal(worth.total, ana.balance + worth.property + worth.buildings);
+  assert.equal(worth.raisable, 1000 + 175 + 200, 'sell every building, then mortgage the unmortgaged deeds');
   assert.equal(calculateRent(game, 'boardwalk'), 2000);
+});
+
+test('reversible moves leave net worth unchanged and real costs show up immediately', () => {
+  const game = makeGame(['Ana', 'Ben']);
+  const [ana] = game.players;
+  const total = () => netWorth(game, ana).total;
+  act(game, { type: 'buy', playerId: ana.id, propertyId: 'park-place' });
+  act(game, { type: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
+  assert.equal(total(), 1500, 'buying at list price keeps worth');
+  act(game, { type: 'building', direction: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
+  assert.equal(total(), 1400, 'a $200 house only resells for $100');
+  act(game, { type: 'building', direction: 'sell', playerId: ana.id, propertyId: 'boardwalk' });
+  assert.equal(total(), 1400, 'selling it back changes nothing');
+  act(game, { type: 'mortgage', playerId: ana.id, propertyId: 'boardwalk' });
+  assert.equal(total(), 1380, 'the $20 interest owed counts as soon as you mortgage');
+  act(game, { type: 'unmortgage', playerId: ana.id, propertyId: 'boardwalk' });
+  assert.equal(total(), 1380, 'paying the mortgage off changes nothing');
+});
+
+test('net worth respects the mortgage interest house rule', () => {
+  const game = makeGame(['Ana', 'Ben'], { rules: { mortgageInterestPercent: 0 } });
+  const [ana] = game.players;
+  act(game, { type: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
+  act(game, { type: 'mortgage', playerId: ana.id, propertyId: 'boardwalk' });
+  assert.equal(netWorth(game, ana).total, 1500);
 });
 
 test('standings rank by net worth, share ties, and list bankrupt players last', () => {

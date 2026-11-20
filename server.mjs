@@ -129,7 +129,9 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
       if (error?.code === 'ENOENT') return sendJson(res, 404, { error: 'Not found.' });
       const status = error instanceof GameError ? error.status : 500;
       if (status === 500) console.error(error);
-      sendJson(res, status, { error: status === 500 ? 'Something went wrong.' : error.message }, error.headers);
+      const body = { error: status === 500 ? 'Something went wrong.' : error.message };
+      if (status !== 500 && error.code) Object.assign(body, { code: error.code, details: error.details });
+      sendJson(res, status, body, error.headers);
     }
   });
   const sweep = setInterval(() => {

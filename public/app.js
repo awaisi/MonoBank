@@ -75,6 +75,12 @@ const activePlayers = () => game.players.filter((player) => !player.bankrupt);
 // "This phone is me": a per-device choice, remembered per game (best effort).
 const identityKey = () => `monobank:me:${game.id}`;
 const mePlayer = () => (me && me !== 'banker' ? playerById(me) : null);
+// This device's player first, then everyone else in seat order.
+const orderedPlayers = (list = game.players) => {
+  const mine = mePlayer();
+  return mine && list.includes(mine) ? [mine, ...list.filter((player) => player !== mine)] : list;
+};
+const seatOf = (player) => game.players.indexOf(player);
 function loadIdentity() {
   try { return localStorage.getItem(identityKey()); } catch { return null; }
 }
@@ -129,6 +135,8 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || 'Request failed.');
     error.status = response.status;
+    error.code = data.code;
+    error.details = data.details;
     throw error;
   }
   return data;
@@ -299,6 +307,7 @@ function renderGame() {
   renderStatus();
   renderMe();
   renderPlayers();
+  renderBalanceStrip();
   renderSelects();
   renderDeeds();
   renderTrade();
@@ -386,7 +395,8 @@ function renderRules() {
 function renderPlayers() {
   $('#total-cash').textContent = `${game.players.length} at the table`;
   const jailRule = rules().noRentInJail;
-  const cards = game.players.map((player, index) => {
+  const cards = orderedPlayers().map((player) => {
+    const index = seatOf(player);
     const deeds = Object.values(game.deeds).filter((deed) => deed.ownerId === player.id).length;
     const worth = standingFor(player.id)?.total ?? player.balance;
     const winner = game.status === 'ended' && game.winnerIds.includes(player.id);
@@ -420,7 +430,7 @@ function optionList({ includeBank = false, includeParking = false, selected = ''
   const values = [
     ...(includeBank ? [{ id: 'bank', name: 'The Bank' }] : []),
     ...(includeParking && rules().freeParkingJackpot ? [{ id: 'parking', name: 'Free Parking pot' }] : []),
-    ...activePlayers()
+    ...orderedPlayers(activePlayers())
   ];
   return values.map((item) => `<option value="${item.id}" ${item.id === selected ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
 }
@@ -479,14 +489,36 @@ function renderBankruptcyPreview() {
   $('#bankrupt-submit-label').textContent = `Declare ${debtor.name} bankrupt`;
 }
 
+// Owner pills on the Deeds tab: All, each active player (this phone's first), and the Bank.
+let deedOwnerFilter = 'all';
+
+function renderOwnerPills() {
+  const owners = orderedPlayers(activePlayers());
+  if (deedOwnerFilter !== 'all' && deedOwnerFilter !== 'bank' && !owners.some((player) => player.id === deedOwnerFilter)) deedOwnerFilter = 'all';
+  const count = (ownerId) => game.properties.filter((property) => (game.deeds[property.id].ownerId || 'bank') === ownerId).length;
+  const pill = (id, label, deeds, color = '', token = '') => `<button type="button" class="owner-pill ${deedOwnerFilter === id ? 'active' : ''}" data-owner="${id}" aria-pressed="${deedOwnerFilter === id}" ${color ? `data-vars="--player-color=${escapeHtml(color)}"` : ''}>${token ? `<span class="pill-token" aria-hidden="true">${token}</span>` : ''}<span>${escapeHtml(label)}</span><small>${deeds}</small></button>`;
+  $('#owner-pills').innerHTML = [
+    pill('all', 'All', game.properties.length),
+    ...owners.map((player) => pill(player.id, player.id === mePlayer()?.id ? `${player.name} (you)` : player.name, count(player.id), player.color, TOKEN_LABELS[seatOf(player)])),
+    pill('bank', 'Bank', count('bank'), '#64716b', '$')
+  ].join('');
+  applyStyleVars($('#owner-pills'));
+  $$('[data-owner]', $('#owner-pills')).forEach((button) => button.addEventListener('click', () => {
+    deedOwnerFilter = button.dataset.owner;
+    renderDeeds();
+  }));
+}
+
 function renderDeeds() {
+  renderOwnerPills();
   const query = $('#deed-search').value.toLowerCase();
   const filter = $('#deed-filter').value;
   const filtered = game.properties.filter((property) => {
     const deed = game.deeds[property.id];
     const matchesQuery = property.name.toLowerCase().includes(query);
     const matchesFilter = filter === 'all' || (filter === 'available' && !deed.ownerId) || (filter === 'owned' && deed.ownerId) || (filter === 'mortgaged' && deed.mortgaged) || (filter === 'mine' && deed.ownerId && deed.ownerId === mePlayer()?.id);
-    return matchesQuery && matchesFilter;
+    const matchesOwner = deedOwnerFilter === 'all' || (deed.ownerId || 'bank') === deedOwnerFilter;
+    return matchesQuery && matchesFilter && matchesOwner;
   });
   $('#deed-grid').innerHTML = filtered.map((property) => {
     const deed = game.deeds[property.id];
@@ -533,7 +565,26 @@ function ledgerHtml(items) {
 
 function renderLedger() {
   $('#mini-ledger').innerHTML = ledgerHtml(game.transactions.slice(0, 6));
-  $('#full-ledger').innerHTML = ledgerHtml(game.transactions);
+  const select = $('#ledger-filter');
+  const current = select.value || 'all';
+  const options = [{ id: 'all', name: 'Everyone' }, ...orderedPlayers().map((player) => ({ id: player.id, name: player.id === mePlayer()?.id ? `${player.name} (you)` : player.name })), { id: 'bank', name: 'The Bank' }];
+  select.innerHTML = options.map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join('');
+  select.value = options.some((item) => item.id === current) ? current : 'all';
+  const filter = select.value;
+  const items = filter === 'all' ? game.transactions : game.transactions.filter((item) => item.fromId === filter || item.toId === filter);
+  const name = filter === 'bank' ? 'the Bank' : playerById(filter)?.name;
+  $('#full-ledger').innerHTML = items.length || filter === 'all' ? ledgerHtml(items) : `<div class="empty-state">No activity for ${escapeHtml(name)} yet.</div>`;
+}
+
+// Compact balances shown at the top of every tab (stays visible while scrolling).
+function renderBalanceStrip() {
+  const chips = orderedPlayers().map((player) => {
+    const isMe = player.id === mePlayer()?.id;
+    return `<span class="balance-chip ${isMe ? 'is-me' : ''} ${player.bankrupt ? 'bankrupt' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span><small>${escapeHtml(player.name)}${isMe ? ' · you' : ''}</small><b>${player.bankrupt ? 'Bankrupt' : money.format(player.balance)}</b></span></span>`;
+  });
+  if (rules().freeParkingJackpot) chips.push(`<span class="balance-chip parking" data-vars="--player-color=#d6b661"><span class="mini-token" aria-hidden="true">P</span><span><small>Free Parking</small><b>${money.format(game.freeParking || 0)}</b></span></span>`);
+  $('#balance-strip').innerHTML = chips.join('');
+  applyStyleVars($('#balance-strip'));
 }
 
 function switchView(view) {
@@ -560,12 +611,69 @@ async function submitAction(action, successMessage) {
     return true;
   } catch (error) {
     if (error.status === 409) await loadGame(true);
-    toast(error.message, 'error');
     feedback.play('error');
+    if (error.code === 'insufficient-funds') {
+      openRaiseCash({ ...error.details, message: error.message });
+      return false;
+    }
+    toast(error.message, 'error');
     return false;
   } finally {
     acting = false;
   }
+}
+
+// "Not enough cash": help the player raise money before retrying a payment.
+let raiseRequest = null;
+const streetGroup = (property) => game.properties.filter((item) => item.kind === 'street' && item.group === property.group);
+
+function raiseCashOptions(player) {
+  const owned = game.properties.filter((property) => game.deeds[property.id].ownerId === player.id);
+  const sells = owned.filter((property) => {
+    const deed = game.deeds[property.id];
+    if (property.kind !== 'street' || !deed.buildings) return false;
+    const highest = Math.max(...streetGroup(property).map((item) => game.deeds[item.id].buildings));
+    return rules().evenBuilding === false || deed.buildings === highest;
+  });
+  const mortgages = owned.filter((property) => !game.deeds[property.id].mortgaged
+    && (property.kind !== 'street' || streetGroup(property).every((item) => !game.deeds[item.id].buildings)));
+  return { sells, mortgages };
+}
+
+function openRaiseCash(details = raiseRequest) {
+  raiseRequest = details;
+  const player = playerById(details.playerId);
+  if (!player) return;
+  const missing = Math.max(0, details.needed - player.balance);
+  const { sells, mortgages } = raiseCashOptions(player);
+  const row = (property, action, label, amount) => `<li><span><strong>${escapeHtml(property.name)}</strong><small>${label}</small></span><button type="button" class="raise-button" data-raise="${action}" data-property="${property.id}">${action === 'sell' ? 'Sell' : 'Mortgage'} +${money.format(amount)}</button></li>`;
+  const sellRows = sells.map((property) => {
+    const count = game.deeds[property.id].buildings;
+    return row(property, 'sell', count === 5 ? 'Hotel' : `${count} house${count === 1 ? '' : 's'}`, Math.floor(property.houseCost / 2));
+  }).join('');
+  const mortgageRows = mortgages.map((property) => row(property, 'mortgage', 'Unmortgaged deed', property.mortgage)).join('');
+  const done = missing === 0;
+  const status = done
+    ? `<p class="raise-status ok">${escapeHtml(player.name)} now has ${money.format(player.balance)}, enough for the ${money.format(details.needed)} payment. Try it again.</p>`
+    : `<p class="raise-status">${escapeHtml(player.name)} has <strong>${money.format(Math.max(player.balance, 0))}</strong> and needs <strong>${money.format(details.needed)}</strong>: raise <strong>${money.format(missing)}</strong> more.</p>`;
+  const nothingLeft = !sells.length && !mortgages.length;
+  $('#raise-content').innerHTML = `<div class="dialog-color raise-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">NOT ENOUGH CASH</p><h2 id="raise-title">Raise cash first</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div>${status}${done ? '' : `${sellRows ? `<h3 class="raise-heading">Sell buildings back to the Bank (half price)</h3><ul class="raise-list">${sellRows}</ul>` : ''}${mortgageRows ? `<h3 class="raise-heading">Mortgage deeds</h3><ul class="raise-list">${mortgageRows}</ul>` : ''}${nothingLeft ? '<p class="muted">Nothing left to sell or mortgage.</p>' : ''}<div class="raise-footer"><p class="muted">Can’t raise enough? Declaring bankruptcy hands everything to whoever is owed.</p><button type="button" class="danger-button full" data-raise-bankrupt><span>Declare ${escapeHtml(player.name)} bankrupt…</span><span aria-hidden="true">→</span></button></div>`}${done ? '<button type="button" class="secondary-button full" data-close-dialog>Done</button>' : ''}</div>`;
+  $$('[data-raise]', $('#raise-content')).forEach((button) => button.addEventListener('click', async () => {
+    const action = button.dataset.raise === 'sell'
+      ? { type: 'building', direction: 'sell', playerId: player.id, propertyId: button.dataset.property }
+      : { type: 'mortgage', playerId: player.id, propertyId: button.dataset.property };
+    if (await submitAction(action, button.dataset.raise === 'sell' ? 'Building sold.' : 'Deed mortgaged.')) openRaiseCash();
+  }));
+  $('[data-raise-bankrupt]', $('#raise-content'))?.addEventListener('click', () => {
+    $('#raise-dialog').close();
+    $$('dialog[open]').forEach((dialog) => dialog.close());
+    switchView('pay');
+    $('#bankrupt-player').value = player.id;
+    renderCreditors();
+    $('#bankruptcy').open = true;
+    $('#bankruptcy').scrollIntoView({ block: 'center' });
+  });
+  if (!$('#raise-dialog').open) $('#raise-dialog').showModal();
 }
 
 async function undoLast() {
@@ -595,7 +703,7 @@ function openResults() {
   const minutes = Math.max(1, Math.round((new Date(game.endedAt || Date.now()) - new Date(game.createdAt)) / 60000));
   const table = rows.map((row) => `<tr class="${game.winnerIds.includes(row.playerId) ? 'winner-row' : ''}"><td>${row.bankrupt ? '—' : row.rank}</td><td>${escapeHtml(row.name)}${row.bankrupt ? ' <small>bankrupt</small>' : ''}</td><td>${money.format(row.cash)}</td><td>${money.format(row.property)}</td><td>${money.format(row.buildings)}</td><td><strong>${money.format(row.total)}</strong></td></tr>`).join('');
   const rentLeader = Object.entries(rentBy).sort((a, b) => b[1] - a[1])[0];
-  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${minutes} minute${minutes === 1 ? '' : 's'} · ${game.transactions.length} transactions${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds at mortgage value) + buildings at cost.</p>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
+  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${minutes} minute${minutes === 1 ? '' : 's'} · ${game.transactions.length} transactions${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
   $('[data-undo-results]', $('#results-content'))?.addEventListener('click', async () => {
     if (await submitAction({ type: 'undo' }, 'Back in play.')) $('#results-dialog').close();
   });
@@ -707,9 +815,9 @@ function openDeed(propertyId) {
       : `<label class="field"><span>List price <small>auctions are off</small></span><input id="deed-price" type="number" value="${property.price}" readonly></label>`;
     controls = `<form class="dialog-form" id="buy-deed-form"><label class="field"><span>Buyer</span><select id="deed-buyer">${optionList({ selected: mePlayer()?.id })}</select></label>${priceField}<button type="submit">ACQUIRE DEED</button></form>`;
   } else {
-    const payers = activePlayers().filter((player) => player.id !== owner.id).map((player) => `<option value="${player.id}" ${player.id === mePlayer()?.id ? 'selected' : ''}>${escapeHtml(player.name)}</option>`).join('');
+    const payers = orderedPlayers(activePlayers()).filter((player) => player.id !== owner.id).map((player) => `<option value="${player.id}" ${player.id === mePlayer()?.id ? 'selected' : ''}>${escapeHtml(player.name)}</option>`).join('');
     const jailed = rules().noRentInJail && owner.inJail;
-    const rentControl = deed.mortgaged ? '' : jailed ? `<p class="rule-note">No rent while ${escapeHtml(owner.name)} is in jail.</p>` : `<form class="dialog-form" id="rent-form"><label class="field"><span>Collect rent from</span><select id="rent-payer">${payers}</select></label>${property.kind === 'utility' ? '<label class="field"><span>Dice total</span><input id="rent-dice" type="number" min="2" max="12" value="7" required></label>' : ''}<button type="submit">COLLECT RENT</button></form>`;
+    const rentControl = deed.mortgaged ? '' : jailed ? `<p class="rule-note">No rent while ${escapeHtml(owner.name)} is in jail.</p>` : `<form class="dialog-form" id="rent-form"><label class="field"><span>Who pays rent?</span><select id="rent-payer">${payers}</select></label>${property.kind === 'utility' ? '<label class="field"><span>Dice total</span><input id="rent-dice" type="number" min="2" max="12" value="7" required></label>' : ''}<button type="submit">PAY RENT TO ${escapeHtml(owner.name.toUpperCase())}</button></form>`;
     const mortgageButton = deed.mortgaged ? `<button class="secondary" data-deed-action="unmortgage">Unmortgage ${money.format(unmortgageCost(property))}</button>` : `<button class="secondary" data-deed-action="mortgage">Mortgage +${money.format(property.mortgage)}</button>`;
     const buildingButtons = property.kind === 'street' && !deed.mortgaged ? `<button class="secondary" data-deed-action="buy-building">＋ ${deed.buildings === 4 ? 'Hotel' : 'House'} ${money.format(property.houseCost)}</button>${deed.buildings ? `<button class="danger" data-deed-action="sell-building">− Sell building ${money.format(Math.floor(property.houseCost / 2))}</button>` : ''}` : '';
     controls = `${rentControl}<div class="dialog-actions">${mortgageButton}${buildingButtons}</div>`;
@@ -724,7 +832,7 @@ function openDeed(propertyId) {
   });
   $('#rent-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (await submitAction({ type:'rent', payerId:$('#rent-payer').value, propertyId, diceTotal:$('#rent-dice') ? Number($('#rent-dice').value) : undefined }, 'Rent collected.')) $('#deed-dialog').close();
+    if (await submitAction({ type:'rent', payerId:$('#rent-payer').value, propertyId, diceTotal:$('#rent-dice') ? Number($('#rent-dice').value) : undefined }, `Rent paid to ${owner.name}.`)) $('#deed-dialog').close();
   });
   $$('[data-deed-action]').forEach((button) => button.addEventListener('click', async () => {
     const types = { mortgage:{type:'mortgage'}, unmortgage:{type:'unmortgage'}, 'buy-building':{type:'building',direction:'buy'}, 'sell-building':{type:'building',direction:'sell'} };
@@ -797,7 +905,8 @@ function bindEvents() {
   $$('[data-undo]').forEach((button) => button.addEventListener('click', undoLast));
   $('#bankrupt-form').addEventListener('submit', declareBankruptcy);
   $('#bankrupt-player').addEventListener('change', renderCreditors);
-  ['#qr-dialog', '#results-dialog', '#identity-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
+  $('#ledger-filter').addEventListener('change', renderLedger);
+  ['#qr-dialog', '#results-dialog', '#identity-dialog', '#raise-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
     if (event.target === $(selector) || event.target.closest('[data-close-dialog]')) $(selector).close();
   }));
   $('#deed-dialog').addEventListener('click', (event) => { if (event.target === $('#deed-dialog')) $('#deed-dialog').close(); });

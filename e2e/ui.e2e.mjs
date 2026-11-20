@@ -23,7 +23,9 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  // A refused payment is a deliberate HTTP 400, which browsers log as a failed resource; anything else fails the run.
+  const expectedRejection = (text) => /Failed to load resource: the server responded with a status of 400/.test(text);
+  page.on('console', (message) => { if (message.type() === 'error' && !expectedRejection(message.text())) errors.push(message.text()); });
   page.on('dialog', (dialog) => dialog.accept());
   const toast = (text) => page.waitForSelector(`.toast:has-text("${text}")`);
   const balances = () => page.$$eval('#player-cards .player-card .balance', (cards) => cards.map((card) => card.textContent));
@@ -147,6 +149,110 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.waitForSelector('#game-screen:not([hidden])');
     assert.equal(await page.isVisible('#identity-dialog[open]'), false, 'choice remembered on this device');
     assert.match(await page.textContent('#me-text'), /Playing as Ana/);
+  });
+
+  await t.test("lists this phone's player first everywhere", async () => {
+    await page.click('#menu-button');
+    await page.click('#switch-player');
+    await page.click('#identity-options .identity-option:has-text("Cy")');
+    await toast('This phone is Cy.');
+    const firstCard = await page.$eval('#player-cards .player-card strong', (name) => name.textContent);
+    const strip = await page.$$eval('#balance-strip .balance-chip small', (chips) => chips.map((chip) => chip.textContent));
+    const fromOptions = await page.$$eval('#payment-from option', (options) => options.map((option) => option.textContent));
+    assert.equal(firstCard, 'Cy');
+    assert.deepEqual(strip.slice(0, 3), ['Cy · you', 'Ana', 'Ben']);
+    assert.deepEqual(fromOptions.slice(0, 3), ['The Bank', 'Cy', 'Ana']);
+    await page.click('#me-switch');
+    await page.click('#identity-options .identity-option:has-text("Ana")');
+    await toast('This phone is Ana.');
+  });
+
+  await t.test('shows player balances at the top of every tab', async () => {
+    for (const view of ['pay', 'deeds', 'trade', 'ledger']) {
+      await page.click(`.view-tabs [data-view="${view}"]`);
+      assert.equal(await page.isVisible('#balance-strip'), true, view);
+      assert.match(await page.textContent('#balance-strip'), /Ana · you\$1,100.*Ben\$1,500.*Cy\$1,500/, view);
+    }
+    const phone = await browser.newPage({ viewport: { width: 375, height: 740 } });
+    await phone.goto(page.url());
+    await phone.click('#identity-options [data-identity="banker"]');
+    await phone.click('#mobile-nav [data-mobile-view="deeds"]');
+    await phone.evaluate(() => scrollTo(0, document.body.scrollHeight / 2));
+    await phone.waitForTimeout(300);
+    const top = await phone.$eval('#balance-strip', (strip) => strip.getBoundingClientRect().top);
+    assert.ok(top >= 0 && top < 120, `balance strip stays pinned under the header while scrolling (top ${top})`);
+    await phone.close();
+    await page.click('.view-tabs [data-view="pay"]');
+  });
+
+  await t.test('rent is paid by the tenant, worded as Pay', async () => {
+    await page.click('.view-tabs [data-view="deeds"]');
+    await page.click('[data-property-id=boardwalk]');
+    assert.equal(await page.textContent('#rent-form .field span'), 'Who pays rent?');
+    assert.equal(await page.textContent('#rent-form button[type=submit]'), 'PAY RENT TO ANA');
+    const payers = await page.$$eval('#rent-payer option', (options) => options.map((option) => option.textContent));
+    assert.deepEqual(payers, ['Ben', 'Cy'], 'the owner never pays themselves');
+    await page.selectOption('#rent-payer', { label: 'Ben' });
+    await page.click('#rent-form button[type=submit]');
+    await toast('Rent paid to Ana.');
+    assert.match(await page.textContent('#balance-strip'), /Ana · you\$1,150.*Ben\$1,450/);
+    await page.click('.activity-panel [data-undo]');
+    await toast('Last action undone.');
+  });
+
+  await t.test('filters activity by player', async () => {
+    await page.click('.view-tabs [data-view="ledger"]');
+    const options = await page.$$eval('#ledger-filter option', (items) => items.map((item) => item.textContent));
+    assert.deepEqual(options, ['Everyone', 'Ana (you)', 'Ben', 'Cy', 'The Bank']);
+    const everyone = await page.$$eval('#full-ledger .ledger-item', (items) => items.length);
+    await page.selectOption('#ledger-filter', { label: 'Cy' });
+    assert.match(await page.textContent('#full-ledger'), /No activity for Cy yet/);
+    await page.selectOption('#ledger-filter', { label: 'Ana (you)' });
+    const anaLabels = await page.$$eval('#full-ledger .ledger-item strong', (items) => items.map((item) => item.textContent));
+    assert.ok(anaLabels.length > 0 && anaLabels.length < everyone);
+    assert.ok(anaLabels.every((label) => label.includes('Ana')), anaLabels.join(' | '));
+    await page.selectOption('#ledger-filter', 'all');
+  });
+
+  await t.test('filters deeds by owner with player pills', async () => {
+    await page.click('.view-tabs [data-view="deeds"]');
+    const pills = await page.$$eval('#owner-pills .owner-pill', (items) => items.map((item) => item.textContent));
+    assert.deepEqual(pills, ['All28', 'MAna (you)1', 'RBen0', 'TCy0', '$Bank27']);
+    assert.equal(await page.getAttribute('#owner-pills [data-owner="all"]', 'aria-pressed'), 'true');
+    await page.click('#owner-pills .owner-pill:has-text("Ana (you)")');
+    assert.deepEqual(await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent)), ['Boardwalk']);
+    assert.equal(await page.getAttribute('#owner-pills .owner-pill:has-text("Ana (you)")', 'aria-pressed'), 'true');
+    await page.click('#owner-pills [data-owner="bank"]');
+    assert.equal(await page.$$eval('#deed-grid .deed-card', (cards) => cards.length), 27);
+    await page.fill('#deed-search', 'avenue');
+    const avenues = await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent));
+    assert.ok(avenues.length > 0 && avenues.every((name) => /Avenue/.test(name)), 'pills combine with search');
+    await page.fill('#deed-search', '');
+    await page.click('#owner-pills .owner-pill:has-text("Ben")');
+    assert.match(await page.textContent('#deed-grid'), /No deeds match this filter/);
+    await page.click('#owner-pills [data-owner="all"]');
+    assert.equal(await page.$$eval('#deed-grid .deed-card', (cards) => cards.length), 28);
+    await page.click('.view-tabs [data-view="pay"]');
+  });
+
+  await t.test('refuses to overdraw and helps raise cash first', async () => {
+    await page.click('.view-tabs [data-view="pay"]');
+    await page.selectOption('#payment-from', { label: 'Ana' });
+    await page.selectOption('#payment-to', { label: 'The Bank' });
+    await page.fill('#payment-amount', '1200');
+    await page.click('#payment-form button[type=submit]');
+    await page.waitForSelector('#raise-dialog[open]');
+    assert.match(await page.textContent('.raise-status'), /Ana has \$1,100 and needs \$1,200: raise \$100 more/);
+    assert.match(await page.textContent('.raise-list'), /Boardwalk.*Mortgage \+\$200/);
+    assert.equal(await page.isVisible('[data-raise-bankrupt]'), true);
+    assert.match(await page.textContent('#balance-strip'), /Ana · you\$1,100/, 'no money moved');
+    await page.click('[data-raise="mortgage"][data-property="boardwalk"]');
+    await page.waitForSelector('.raise-status.ok');
+    assert.match(await page.textContent('.raise-status'), /Ana now has \$1,300, enough for the \$1,200 payment/);
+    await page.click('#raise-dialog .secondary-button[data-close-dialog]');
+    await page.click('.activity-panel [data-undo]');
+    await page.waitForFunction(() => /Ana · you\$1,100/.test(document.querySelector('#balance-strip').textContent));
+    await page.fill('#payment-amount', '');
   });
 
   await t.test('declares a bankruptcy to another player', async () => {

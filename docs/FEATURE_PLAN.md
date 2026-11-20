@@ -23,6 +23,9 @@ Priorities:
 | **Sound & haptics** (#24) | PR #5 | Chime + vibration on payments (local and from other devices); per-device toggle. |
 | **Durable game storage** (#1) | PR #7 | Azure Files share mounted at `/data`; one JSON file per game written atomically after every action; games and undo history survive restarts and deploys; the deploy verifies a probe game survives. |
 | **Abuse limits** (#3) | PR #7 | 20 new games/hour and 600 API requests/minute per IP (429 + `Retry-After`), 5,000 active-game cap (503), `TRUST_PROXY` for `X-Forwarded-For`. |
+| **No negative balances + Raise cash dialog** | PR #11 | Every debit checks the payer's cash; shortfall, raisable amount, Sell/Mortgage buttons and a bankruptcy shortcut. Hotels can't be bought on credit. |
+| **Net worth as equity** | PR #11 | Mortgaged deeds net of payoff, buildings at resale; reversible moves net to zero (was purchase price, which hid resale losses and interest). |
+| **Balance strip, activity filter, deed owner pills, Pay rent wording, your name first** | PR #11 | Balances pinned on every tab; Activity filter by player or Bank; Deeds owner pills with counts; "Who pays rent? → Pay rent to …"; this phone's player first in all lists. |
 | **5–8 players** (#11) | PR #10 | Up to 8 players with distinct colors and generic tokens; denser player grid and two-column identity picker for big tables; setup shows "N of 8 players". |
 | **"This phone is me" mode** (#13) | PR #9 | Per-device player or banker choice (localStorage); me-bar, You badge, pre-filled forms, My deeds filter, Switch player. |
 | **Instant updates** (#16) | PR #9 | Server-sent events per game with heartbeat and caps; polling fallback (3.5 s down / 30 s safety net); amber dot while reconnecting. |
