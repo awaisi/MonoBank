@@ -58,7 +58,7 @@ test('file store persists games and reloads them after a restart', async (t) => 
   const game = await first.create(players);
   performAction(game, { type: 'transfer', fromId: game.players[0].id, toId: 'bank', amount: 200 });
   await first.save(game);
-  assert.deepEqual(await readdir(dir), [`${game.id}.json`], 'no temp files left behind');
+  assert.deepEqual((await readdir(dir)).sort(), [`${game.id}.json`, `watch-${game.viewToken}.json`].sort(), 'no temp files left behind');
 
   const restarted = await new GameStore({ dataDir: dir }).init();
   assert.equal(restarted.size, 1);
@@ -117,7 +117,7 @@ test('expired games are deleted from disk on read and on sweep', async (t) => {
   const files = await readdir(dir);
   assert.equal(files.includes(`${diskOnly.id}.json`), false, 'old disk-only game removed');
   assert.equal(files.includes(`${fresh.id}.json`), true, 'fresh game kept');
-  assert.equal(store.size, files.length);
+  assert.equal(store.size, files.filter((file) => /^[a-f0-9]{16}\.json$/.test(file)).length);
   assert.ok(sweptInMemory);
 });
 
@@ -200,6 +200,6 @@ test('sweep logs files that cannot be inspected and skips ones that vanish', asy
   };
   const store = await new GameStore({ dataDir: dir, logger, fs }).init();
   await store.sweep();
-  assert.equal(logger.errors.length, 1);
+  assert.equal(logger.errors.filter((message) => message.includes('Could not inspect game')).length, 1);
   assert.match(logger.errors[0], new RegExp(`Could not inspect game ${locked.id}`));
 });

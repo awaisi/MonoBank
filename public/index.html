@@ -27,7 +27,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon.svg">
-  <link rel="stylesheet" href="/styles.css?v=4">
+  <link rel="stylesheet" href="/styles.css?v=5">
   <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "MonoBank", "alternateName": "MonoBank – Unofficial Monopoly Banker", "url": "https://monobank.divviq.app/", "description": "Free, unofficial digital banker for Monopoly game night. One shared bank on every phone: pay rent, buy deeds, trade and track every transaction. No download or sign-up.", "applicationCategory": "GameApplication", "operatingSystem": "Any (web browser)", "browserRequirements": "Requires JavaScript and a modern web browser.", "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "image": "https://monobank.divviq.app/og-image.jpg", "featureList": ["Shared live bank for 2–4 players", "Rent calculation", "Deeds, mortgages, houses and hotels", "Trades", "House rules", "Undo", "Bankruptcy and net worth", "QR code to join"], "disambiguatingDescription": "MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc."}</script>
 </head>
 <body>
@@ -45,6 +45,8 @@
           <button type="button" class="menu-button" id="menu-button" aria-haspopup="menu" aria-expanded="false" aria-controls="game-menu" aria-label="Game menu"><span aria-hidden="true"></span></button>
           <div class="menu-panel" id="game-menu" role="menu" aria-label="Game menu" hidden>
             <button type="button" role="menuitem" id="share-game"><span aria-hidden="true">↗</span>Copy game link</button>
+            <button type="button" role="menuitem" id="copy-watch" class="player-only"><span aria-hidden="true">👁</span>Copy spectator link</button>
+            <button type="button" role="menuitem" id="switch-player" class="player-only"><span aria-hidden="true">👤</span>Switch player…</button>
             <button type="button" role="menuitemcheckbox" id="sound-toggle" aria-checked="true"><span aria-hidden="true">🔊</span>Sound &amp; vibration</button>
             <button type="button" role="menuitem" id="end-game" class="menu-danger"><span aria-hidden="true">★</span>End game</button>
           </div>
@@ -59,7 +61,7 @@
           <h1>Ditch the paper money.<br><em>Run the bank from your phone.</em></h1>
           <p>MonoBank is a free digital banker for Monopoly game night. Everyone at the table shares one live bank—pay rent, buy deeds, trade and mortgage in seconds, with every transaction tracked. No download, no sign-up.</p>
           <div class="feature-strip" aria-label="Features">
-            <span>⚡ Instant payments</span><span>⌂ Deeds &amp; automatic rent</span><span>↗ Shareable link &amp; QR</span><span>⚙ House rules</span>
+            <span>⚡ Instant payments</span><span>⌂ Deeds &amp; automatic rent</span><span>↗ Live on every phone</span><span>👁 Spectator link</span><span>⚙ House rules</span>
           </div>
           <div class="table-art" aria-hidden="true">
             <div class="board-card card-a"><span></span><b>BOARDWALK</b><small>$400</small></div>
@@ -98,7 +100,7 @@
 
       <section id="game-screen" class="game-layout" hidden>
         <div class="game-head">
-          <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1><p class="rules-line" id="rules-line"></p></div>
+          <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1><p class="rules-line" id="rules-line"></p><div class="me-bar" id="me-bar" hidden><span id="me-text"></span><button type="button" class="me-switch" id="me-switch">Switch</button></div><p class="spectator-note" id="spectator-note" hidden><span aria-hidden="true">👁</span> You’re watching. This link is view-only and can’t change anything.</p></div>
         </div>
         <div class="ended-banner" id="ended-banner" role="status" hidden><strong id="ended-text"></strong><button type="button" id="view-results">View results</button></div>
 
@@ -159,7 +161,7 @@
 
             <div id="deeds-view" class="console-view" hidden>
               <div class="view-heading"><div><p class="kicker">PROPERTY DESK</p><h2>Manage the board</h2></div><div class="bank-seal">⌂</div></div>
-              <div class="filters"><label><span class="sr-only">Search deeds</span><input id="deed-search" type="search" placeholder="Search a deed…"></label><select id="deed-filter" aria-label="Filter deeds"><option value="all">All deeds</option><option value="available">Available</option><option value="owned">Owned</option><option value="mortgaged">Mortgaged</option></select></div>
+              <div class="filters"><label><span class="sr-only">Search deeds</span><input id="deed-search" type="search" placeholder="Search a deed…"></label><select id="deed-filter" aria-label="Filter deeds"><option value="all">All deeds</option><option value="mine">My deeds</option><option value="available">Available</option><option value="owned">Owned</option><option value="mortgaged">Mortgaged</option></select></div>
               <div id="deed-grid" class="deed-grid"></div>
             </div>
 
@@ -208,9 +210,10 @@
   </div>
 
   <dialog id="deed-dialog" class="deed-dialog"><div id="deed-dialog-content"></div></dialog>
-  <dialog id="qr-dialog" class="deed-dialog" aria-labelledby="qr-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">JOIN THIS GAME</p><h2 id="qr-title">Scan to join</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div id="qr-code" class="qr-code"></div><p class="qr-url" id="qr-url"></p><button type="button" class="secondary-button full" id="qr-copy">Copy link</button></div></dialog>
+  <dialog id="qr-dialog" class="deed-dialog" aria-labelledby="qr-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">JOIN THIS GAME</p><h2 id="qr-title">Scan to join</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="qr-modes" id="qr-modes" role="radiogroup" aria-label="Who is this link for?"><label><input type="radio" name="qr-mode" value="play" checked><span><strong>Players</strong><small>Can bank</small></span></label><label><input type="radio" name="qr-mode" value="watch"><span><strong>Spectators</strong><small>View only</small></span></label></div><div id="qr-code" class="qr-code"></div><p class="qr-help" id="qr-help"></p><p class="qr-url" id="qr-url"></p><button type="button" class="secondary-button full" id="qr-copy">Copy link</button></div></dialog>
   <dialog id="results-dialog" class="deed-dialog" aria-labelledby="results-title"><div id="results-content"></div></dialog>
+  <dialog id="identity-dialog" class="deed-dialog" aria-labelledby="identity-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">THIS PHONE</p><h2 id="identity-title">Who’s playing on this phone?</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><p class="muted">Pick yourself to see your balance first and have your name filled in. Everyone can still bank for anyone.</p><div id="identity-options" class="identity-options"></div></div></dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/app.js?v=4"></script>
+  <script type="module" src="/app.js?v=5"></script>
 </body>
 </html>
