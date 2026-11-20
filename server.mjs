@@ -2,7 +2,13 @@ import { createServer as createNodeServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GameError, GameStore, performAction, publicGame } from './lib/game.mjs';
+import { GameError, performAction, publicGame } from './lib/game.mjs';
+import { GameStore } from './lib/store.mjs';
+import { RateLimiter } from './lib/rate-limit.mjs';
+
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+export const DEFAULT_LIMITS = Object.freeze({ createPerHour: 20, apiPerMinute: 600 });
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const MIME = {
@@ -18,8 +24,8 @@ const securityHeaders = {
   'Content-Security-Policy': "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'self'; frame-ancestors 'none'"
 };
 
-function sendJson(res, status, value) {
-  res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+function sendJson(res, status, value, headers = {}) {
+  res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
   res.end(JSON.stringify(value));
 }
 
@@ -35,23 +41,48 @@ async function readJson(req) {
   catch { throw new GameError('Invalid JSON.'); }
 }
 
-export function createAppServer({ store = new GameStore() } = {}) {
+/** Client address for rate limiting. Proxy headers are trusted only behind a known proxy. */
+export function clientAddress(req, trustProxy) {
+  const forwarded = trustProxy ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
+  return forwarded || req.socket.remoteAddress || 'unknown';
+}
+
+function enforce(limiter, key) {
+  const result = limiter.take(key);
+  if (!result.allowed) {
+    const error = new GameError(`Too many requests. Please wait ${result.retryAfterSeconds} seconds and try again.`, 429);
+    error.headers = { 'Retry-After': String(result.retryAfterSeconds) };
+    throw error;
+  }
+}
+
+export function createAppServer({ store = new GameStore(), limits = {}, trustProxy = false } = {}) {
+  const { createPerHour, apiPerMinute } = { ...DEFAULT_LIMITS, ...limits };
+  const createLimiter = new RateLimiter({ limit: createPerHour, windowMs: HOUR });
+  const apiLimiter = new RateLimiter({ limit: apiPerMinute, windowMs: MINUTE });
+
   const server = createNodeServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (req.method === 'GET' && url.pathname === '/health') {
-        return sendJson(res, 200, { status: 'ok', service: 'monobank' });
+        return sendJson(res, 200, { status: 'ok', service: 'monobank', storage: store.kind });
+      }
+      if (url.pathname.startsWith('/api/')) {
+        const client = clientAddress(req, trustProxy);
+        enforce(apiLimiter, client);
+        if (req.method === 'POST' && url.pathname === '/api/games') enforce(createLimiter, client);
       }
       if (req.method === 'POST' && url.pathname === '/api/games') {
-        const game = store.create(await readJson(req));
+        const game = await store.create(await readJson(req));
         return sendJson(res, 201, publicGame(game));
       }
       const match = url.pathname.match(/^\/api\/games\/([a-f0-9]{16})(?:\/actions)?$/);
       if (match) {
-        const game = store.get(match[1]);
+        const game = await store.get(match[1]);
         if (req.method === 'GET' && !url.pathname.endsWith('/actions')) return sendJson(res, 200, publicGame(game));
         if (req.method === 'POST' && url.pathname.endsWith('/actions')) {
           performAction(game, await readJson(req));
+          await store.save(game);
           return sendJson(res, 200, publicGame(game));
         }
       }
@@ -73,16 +104,44 @@ export function createAppServer({ store = new GameStore() } = {}) {
       if (error?.code === 'ENOENT') return sendJson(res, 404, { error: 'Not found.' });
       const status = error instanceof GameError ? error.status : 500;
       if (status === 500) console.error(error);
-      sendJson(res, status, { error: status === 500 ? 'Something went wrong.' : error.message });
+      sendJson(res, status, { error: status === 500 ? 'Something went wrong.' : error.message }, error.headers);
     }
   });
-  const sweep = setInterval(() => store.sweep(), 15 * 60 * 1000);
+  const sweep = setInterval(() => {
+    store.sweep().catch((error) => console.error('Sweep failed', error));
+    createLimiter.sweep();
+    apiLimiter.sweep();
+  }, 15 * MINUTE);
   sweep.unref();
+  server.on('close', () => clearInterval(sweep));
   return server;
+}
+
+/** Build the store from environment settings, falling back to memory if the data directory is unusable. */
+export async function storeFromEnv(env = process.env, logger = console) {
+  const options = { maxGames: Number(env.MAX_GAMES) || undefined };
+  if (!env.DATA_DIR) return new GameStore(options);
+  try {
+    return await new GameStore({ ...options, dataDir: env.DATA_DIR }).init();
+  } catch (error) {
+    logger.error(`Persistent storage at ${env.DATA_DIR} is unavailable; games will be kept in memory only.`, error);
+    return new GameStore(options);
+  }
+}
+
+export function limitsFromEnv(env = process.env) {
+  return {
+    createPerHour: Number(env.RATE_LIMIT_CREATE_PER_HOUR) || DEFAULT_LIMITS.createPerHour,
+    apiPerMinute: Number(env.RATE_LIMIT_API_PER_MINUTE) || DEFAULT_LIMITS.apiPerMinute
+  };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 3000);
-  const server = createAppServer();
-  server.listen(port, '0.0.0.0', () => console.log(`MonoBank is ready at http://localhost:${port}`));
+  const store = await storeFromEnv();
+  const server = createAppServer({ store, limits: limitsFromEnv(), trustProxy: process.env.TRUST_PROXY === '1' });
+  server.listen(port, '0.0.0.0', () => console.log(`MonoBank is ready at http://localhost:${port} (${store.kind} storage)`));
+  const shutdown = () => server.close(() => store.flush().finally(() => process.exit(0)));
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
