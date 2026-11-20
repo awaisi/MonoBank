@@ -13,7 +13,7 @@ MonoBank is a mobile-first shared banking companion for a classic property-tradi
 npm test          # node --test (test/*.test.mjs)
 npm run coverage  # tests + coverage report (node --experimental-test-coverage)
 npm run coverage:check  # fails below 100% line coverage on the core modules (run in CI)
-npm run check     # node --check on server.mjs, lib/*.mjs, public/app.js, public/qr.js
+npm run check     # node --check on server.mjs, lib/*.mjs, public/app.js, public/qr.js, public/admin.js
 npm run e2e       # Playwright browser test (e2e/ui.e2e.mjs); needs Playwright installed, skips otherwise
 npm run dev       # node --watch server.mjs → http://localhost:3000
 docker build -t monobank . && docker run -p 3000:3000 monobank
@@ -32,10 +32,12 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 | `lib/store.mjs` | `GameStore`: in-memory working copy with optional write-through to `DATA_DIR/<id>.json` (atomic writes, per-game write queue, load de-duplication, retention sweep: active games 30 days after the last change, ended games 7 days, idle games unloaded from memory after 2 h; `maxGames` cap). `getByWatchToken()` resolves spectator tokens via `DATA_DIR/watch-<token>.json`; games saved before spectator links get a token on load. |
 | `lib/rate-limit.mjs` | Fixed-window `RateLimiter` used by the server for per-IP limits. |
 | `lib/streams.mjs` | `GameStreams`: server-sent event fan-out per game (per-subscriber view function, per-game and total caps, heartbeat, `closeAll()` on shutdown). |
+| `lib/admin.mjs` | Admin usage stats (pure): `summarizeGame()` (anonymous per-game summary), `aggregateUsage()`, `adminTokenMatches()` (constant-time), `bearerToken()`, `RuntimeMetrics` (counters since restart). |
 | `lib/properties.mjs` | Deed data (28 classic U.S. deeds) and color groups. |
 | `public/` | Vanilla JS single-page client (`app.js`), `index.html`, `styles.css`, PWA manifest, `robots.txt`, `sitemap.xml`, `og-image.jpg` (1200×630 share image). No build step. |
+| `public/admin.html`, `public/admin.js` | Private `/admin` usage dashboard (token sign-in, charts, "What to look at"). Served only when `ADMIN_TOKEN` is set. |
 | `public/qr.js` | Dependency-free QR encoder (byte mode, versions 1–10). Shared by the browser and Node tests. |
-| `test/*.test.mjs` | `game` (core + house rules), `rules` (rent/building/trade/validation), `features` (undo, bankruptcy, net worth, end game), `qr`, `server` (HTTP, errors, static files, SEO), `store` (persistence, restarts, TTL, capacity, I/O failures), `limits` (rate limiting, proxy trust, configuration, restart survival), `live` (SSE streams, spectator API, spectator token storage), `cash` (no negative balances, raisable amounts, insufficient-funds API errors), `activity` (balance stamps, ledger cap and paging, activity stats, CSV export and their API routes). |
+| `test/*.test.mjs` | `game` (core + house rules), `rules` (rent/building/trade/validation), `features` (undo, bankruptcy, net worth, end game), `qr`, `server` (HTTP, errors, static files, SEO), `store` (persistence, restarts, TTL, capacity, I/O failures), `limits` (rate limiting, proxy trust, configuration, restart survival), `live` (SSE streams, spectator API, spectator token storage), `cash` (no negative balances, raisable amounts, insufficient-funds API errors), `activity` (balance stamps, ledger cap and paging, activity stats, CSV export and their API routes), `admin` (token checks, summaries, aggregation, runtime metrics, store usage cache, admin API and privacy). |
 | `e2e/ui.e2e.mjs` | Browser end-to-end test of the main flows; not part of `npm test`. |
 | `docs/FEATURE_PLAN.md` | Prioritized backlog and shipped features. |
 | `Dockerfile` | Production image (Node 22 Alpine, runs as `node`). |
@@ -59,6 +61,7 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 - **Live updates.** After every successful action the server calls `streams.publish(game)` (after `store.save`). Each subscriber gets its own view: `publicGame` for players, `spectatorView` for spectators. Never publish on a failed action. Open streams must not block shutdown: `server.close()` ends them first.
 - **Spectators.** A game has two secrets: `id` (full control) and `viewToken` (read-only). `spectatorView()` must never contain `id` (tests assert the ID appears nowhere in spectator payloads or pages), and there must be no write route under `/api/watch/`. Any new field that could reveal `id` must be stripped there.
 - **Retention and memory.** `GameStore.isExpired()` uses `ttlMs` (30 days) for active games and `endedTtlMs` (7 days, capped by `ttlMs`) for ended ones; on-disk files not in memory are judged by file age against `ttlMs`. `sweep()` (every 15 min) also unloads games idle for `idleUnloadMs` (2 h) without pending writes; they load again from disk on the next request. `save()` re-adopts a game object whose revision is newer than the in-memory copy, so a request that held a game across an unload can't be overwritten by a stale reload. Update the home page fine print and README if retention changes.
+- **Admin page.** `/admin` (and `/admin.html`, `/admin.js`) plus `GET /api/admin/stats` exist only when `createAppServer({ adminToken })` gets a token of at least `MIN_ADMIN_TOKEN_LENGTH` (24) characters; production reads `ADMIN_TOKEN` via `adminTokenFromEnv()`. The API takes the token only as `Authorization: Bearer` (never a query string), compares it in constant time, and limits wrong tokens to 10 per 15 minutes per address (401 with `WWW-Authenticate: Bearer`). Admin pages send `X-Robots-Tag: noindex, nofollow` and `Cache-Control: no-store`, carry a `noindex` meta tag, and must never be linked from public pages, added to the sitemap, or listed in `robots.txt`. Stats come from `store.usage(summarizeGame)` (each file summarized once, re-read only when its mtime changes) and `RuntimeMetrics` (requests, errors by code, actions, live connections, save timings; reset on restart). **Never put game IDs, view tokens or player names in admin output** (tests assert this); notes appear only when typed 3+ times.
 - **Single instance.** Memory is the working copy, so the app must run as exactly one replica. Do not scale out without moving to a shared database with concurrency control.
 - **Abuse limits** (`server.mjs`): every `/api/` request counts against the per-IP API limit, and `POST /api/games` also counts against the creation limit. Limit errors are `GameError`s with status 429 and a `Retry-After` header. `X-Forwarded-For` is honoured only with `TRUST_PROXY=1`.
 
@@ -102,12 +105,13 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 - Azure auth is OIDC (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`). The deploy identity has **Contributor only**: it cannot create role assignments, which is why ACR uses its admin user for pulls.
 - The Cloudflare `monobank` CNAME must stay **DNS only**; Azure renews the managed certificate through it.
 - `infra/bootstrap-azure.sh` / the bootstrap workflow are one-time setup and need the `BOOTSTRAP_*` secrets, which may have been deleted. Do not depend on them for routine deploys.
-- Never commit secrets. Never put secrets in Bicep parameters files, workflow `env`, or logs.
+- **Admin token:** the optional `ADMIN_TOKEN` GitHub secret reaches the deploy step's `env` from `secrets.*` (masked), goes to Bicep as the `@secure()` `adminToken` parameter, and becomes the Container Apps secret `admin-token` referenced by the `ADMIN_TOKEN` env var. Empty means no secret and no admin page.
+- Never commit secrets. Never put secrets in Bicep parameters files, hard-coded workflow `env`, or logs; secrets come only from GitHub `secrets.*`.
 
 ## Testing standard
 
 - Every action needs tests for the success path, **each** `GameError` path, undo of the action, and at least one API-level test in `test/server.test.mjs` when it adds a new action type.
-- Keep **100% line coverage** for `lib/game.mjs`, `lib/store.mjs`, `lib/rate-limit.mjs`, `lib/streams.mjs` and `public/qr.js` (`npm run coverage`). Do not lower coverage to land a feature. File-system error paths are tested by injecting `fs` into `GameStore`.
+- Keep **100% line coverage** for `lib/game.mjs`, `lib/store.mjs`, `lib/rate-limit.mjs`, `lib/streams.mjs`, `lib/admin.mjs` and `public/qr.js` (`npm run coverage`). Do not lower coverage to land a feature. File-system error paths are tested by injecting `fs` into `GameStore`.
 - CI enforces the coverage rule with `npm run coverage:check` and runs the browser tests; a pull request must be green before merging.
 - UI changes: extend `e2e/ui.e2e.mjs` for the new flow and run `npm run e2e` (it also asserts no console/CSP errors and no horizontal scroll at 375 px; deliberate HTTP 400 rejections are the only console errors it ignores).
 

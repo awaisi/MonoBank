@@ -64,10 +64,10 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ## Testing
 
 ```bash
-npm test           # 136 unit and API tests (node:test)
+npm test           # 150 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report
-npm run coverage:check  # fails unless lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js have 100% line coverage (CI runs this)
-npm run e2e        # 35 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run coverage:check  # fails unless lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs, lib/admin.mjs and public/qr.js have 100% line coverage (CI runs this)
+npm run e2e        # 36 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available. CI installs Playwright in a scratch folder (outside the repo, found through `NODE_PATH`) and sets `E2E_REQUIRED=1`, so there a missing browser fails the run instead of skipping it.
@@ -156,6 +156,25 @@ If the data directory can't be created or read at startup, the server logs an er
 | `RATE_LIMIT_CREATE_PER_HOUR` | `20` | New games per IP per hour |
 | `RATE_LIMIT_API_PER_MINUTE` | `600` | API requests per IP per minute |
 | `TRUST_PROXY` | unset | Set to `1` behind a trusted reverse proxy to use `X-Forwarded-For` |
+| `ADMIN_TOKEN` | unset | Secret (24+ characters) that enables the private `/admin` usage page; unset or shorter keeps it disabled |
+
+## Admin usage page
+
+A private dashboard at **`/admin`** shows how MonoBank is used, to help decide what to improve. It exists only when `ADMIN_TOKEN` is set (otherwise `/admin` and its API return 404).
+
+- **Sign in:** enter the token on the page. It is kept only in that browser tab (`sessionStorage`) and sent as an `Authorization: Bearer` header, never in a URL. Wrong tokens are limited to 10 per 15 minutes per address. **Sign out** forgets it.
+- **What it shows:**
+  - stored games, new games today/this week, games being played now, finished share, median game length;
+  - a funnel from *created* → *first move* → *10+ moves* → *finished in the app*;
+  - new games per day (30 days) and the hours games start (in your time zone);
+  - table sizes, house rules people turn on, the mix of moves (payments, rent, purchases, building, trades, undos…), how games end, the most-used payment notes and starting cash;
+  - server health since the last restart: requests, server errors, errors players hit (not enough cash, two phones at once, rate limits), save speed, live connections, memory and storage.
+
+  A **What to look at** list turns these into plain-language pointers (for example, many games never getting a first move, or a high undo rate).
+- **Privacy:** it never shows game links, spectator tokens or player names, and payment notes appear only when typed 3+ times across games.
+- **Search engines:** the page, its script and its API send `X-Robots-Tag: noindex` (plus a `noindex, nofollow, noarchive` meta tag), are never cached, aren't linked from anywhere and aren't in the sitemap. They're deliberately not listed in `robots.txt`, which would only advertise the path and stop crawlers from seeing the noindex.
+- **Production:** add a repository secret **`ADMIN_TOKEN`** (for example `openssl rand -base64 32`). The deploy passes it to Bicep as a secure parameter, which stores it as a Container Apps secret. Remove the secret and redeploy to turn the page off.
+- **How it's computed:** stats are calculated on demand from the stored game files. Each file is summarized once and re-read only when it changes, so refreshing the page is cheap.
 
 ## Azure architecture
 
@@ -247,6 +266,7 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 - `POST /api/games` — create a game: `{ "players": ["Ana", "Ben"], "startingBalance": 1500, "rules": { "freeParkingJackpot": true, "freeParkingSeed": 500 } }` (`rules` is optional; omitted keys use the defaults)
 - `GET /api/games/:id/events` — **server-sent events** stream: an `event: game` message with the full public state on connect and after every change, plus a heartbeat comment every 25 s. Up to 50 streams per game and 2,000 in total (HTTP 503 beyond that).
 - `GET /api/games/:id/transactions?before=<entryId>&limit=100` — older ledger entries after the given entry, newest first: `{ transactions, hasMore }` (404 if that entry is no longer stored).
+- `GET /api/admin/stats` — admin usage statistics (`usage`, `storage`, `runtime`); requires `Authorization: Bearer <ADMIN_TOKEN>`, 401 otherwise, 404 when no admin token is configured. Never includes game IDs, tokens or player names.
 - `GET /api/games/:id/activity.csv` — the whole stored ledger as a CSV download (oldest first, with every player's balance after each move; cells that look like spreadsheet formulas are escaped).
 - `GET /api/watch/:token` and `GET /api/watch/:token/events` (plus read-only `/transactions` and `/activity.csv`) — the **spectator** equivalents: the same state with `id: null`, `spectator: true` and `undo: null`. There are no write routes for spectator tokens.
 - `GET /api/games/:id` — read current game state, including `viewToken` (the spectator token, for sharing), `rules`, `freeParking` (pot balance), each player's `inJail` and `bankrupt`, `status` (`active`/`ended`), `winnerIds`, `standings` (net worth breakdown, `raisable` and rank per player), `playTime` (once ended: `{ startedAt, endedAt, minutes }`, from the first move to the last move before Finish game), `transactions` (the newest 150 ledger entries, each with `balances` and `deltas` per seat after the move), `transactionCount`, `transactionsDropped` (entries trimmed past 2,000), `activity` (totals: moves, money moved, trades, Free Parking paid out, and per-player money in/out, rent, taxes and GO passes), and `undo` (the action that undo would reverse, or `null`)

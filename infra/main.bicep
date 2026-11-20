@@ -21,6 +21,10 @@ param customDomain string = ''
 @description('Resource ID of the managed certificate for customDomain. Leave empty to attach the hostname unbound so a certificate can be issued.')
 param customDomainCertificateId string = ''
 
+@secure()
+@description('Optional admin token (24+ characters) for the /admin usage page. Empty keeps the admin page disabled. Passed from the ADMIN_TOKEN GitHub secret.')
+param adminToken string = ''
+
 var suffix = uniqueString(subscription().id, environmentName, baseName)
 var resourceGroupName = 'rg-${baseName}-${environmentName}'
 
@@ -48,6 +52,7 @@ module containerApps 'containerapps.bicep' = {
     containerImage: containerImage
     customDomain: customDomain
     customDomainCertificateId: customDomainCertificateId
+    adminToken: adminToken
   }
 }
 

@@ -183,6 +183,8 @@ jobs:
           IMAGE: ${{ steps.image.outputs.image }}
           DOMAIN: ${{ steps.domain.outputs.domain }}
           CERT_ID: ${{ steps.domain.outputs.certificateId }}
+          # Optional: enables the /admin usage page. GitHub masks it in logs; Bicep stores it as a secret.
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           out=$(az deployment sub create \
@@ -190,7 +192,7 @@ jobs:
             --location "$AZURE_LOCATION" \
             --template-file infra/main.bicep \
             --parameters location="$AZURE_LOCATION" deployApp=true containerImage="$IMAGE" \
-                         customDomain="$DOMAIN" customDomainCertificateId="$CERT_ID" \
+                         customDomain="$DOMAIN" customDomainCertificateId="$CERT_ID" adminToken="$ADMIN_TOKEN" \
             --query properties.outputs -o json)
           url=$(jq -r .webAppUrl.value <<<"$out")
           echo "webAppUrl=$url" >> "$GITHUB_OUTPUT"

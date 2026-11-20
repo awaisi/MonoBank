@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Admin · MonoBank</title>
+  <!-- Private page: never indexed or followed, never sends the URL as a referrer. -->
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0e2c24">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=9">
+</head>
+<body class="admin-body">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="MonoBank home">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <span class="brand-text"><span class="brand-name">MonoBank</span><span class="brand-tagline">Admin · usage</span></span>
+    </a>
+    <div class="admin-actions" id="admin-actions" hidden>
+      <button type="button" class="admin-button" id="admin-refresh">Refresh</button>
+      <button type="button" class="admin-button ghost" id="admin-signout">Sign out</button>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <section class="admin-signin" id="admin-signin" hidden>
+      <h1>Admin</h1>
+      <p class="muted">Enter the admin token to see how MonoBank is being used. It is kept only in this browser tab.</p>
+      <form id="admin-form" class="admin-form">
+        <label class="field"><span>Admin token</span><input id="admin-token" type="password" autocomplete="current-password" required spellcheck="false"></label>
+        <button type="submit" class="primary-button"><span>Show usage</span><span aria-hidden="true">→</span></button>
+        <p class="form-error" id="admin-error" role="alert"></p>
+      </form>
+    </section>
+    <div id="admin-content" class="admin-content" aria-live="off"></div>
+  </main>
+
+  <footer class="site-footer">
+    <p><strong>MonoBank</strong> · Unofficial banker for Monopoly game night</p>
+    <p class="trademark">MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc.</p>
+  </footer>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="/admin.js?v=1"></script>
+</body>
+</html>

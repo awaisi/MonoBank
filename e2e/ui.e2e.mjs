@@ -19,7 +19,8 @@ const skipReason = chromium || process.env.E2E_REQUIRED ? false : 'Playwright is
 test('MonoBank UI flows', { skip: skipReason }, async (t) => {
   if (!chromium) throw new Error('Playwright is required (E2E_REQUIRED=1) but could not be loaded. Install it outside the repo and set NODE_PATH.');
   const store = new GameStore();
-  const server = createAppServer({ store });
+  const ADMIN_TOKEN = 'e2e-admin-token-0123456789abcdef';
+  const server = createAppServer({ store, adminToken: ADMIN_TOKEN });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch();
@@ -728,6 +729,44 @@ test('MonoBank UI flows', { skip: skipReason }, async (t) => {
     assert.deepEqual(tiny, [], 'no visible text smaller than 10px');
     assert.ok(parseFloat(await phone.$eval('.ledger-amount time', (time) => getComputedStyle(time).fontSize)) >= 11);
     await context.close();
+  });
+
+  await t.test('admin page shows usage only with the token', async () => {
+    const admin = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const adminErrors = [];
+    admin.on('pageerror', (error) => adminErrors.push(error.message));
+    admin.on('console', (message) => { if (message.type() === 'error' && !/status of 401/.test(message.text())) adminErrors.push(message.text()); });
+    const response = await admin.goto(`${base}/admin`);
+    assert.equal(response.headers()['x-robots-tag'], 'noindex, nofollow');
+    assert.equal(await admin.isVisible('#admin-signin'), true);
+    await admin.fill('#admin-token', 'not-the-right-token-at-all-xx');
+    await admin.click('#admin-form button[type=submit]');
+    await admin.waitForSelector('#admin-error:has-text("not right")');
+    await admin.fill('#admin-token', ADMIN_TOKEN);
+    await admin.click('#admin-form button[type=submit]');
+    await admin.waitForSelector('.admin-kpis');
+    assert.equal(await admin.isVisible('#admin-signin'), false);
+    assert.match(await admin.textContent('.admin-kpis'), /Games stored\d+/);
+    assert.ok(Number((await admin.textContent('.admin-kpi strong')).replace(/\D/g, '')) >= 5, 'counts the games this run created');
+    assert.equal(await admin.$$eval('.admin-card:has-text("New games per day") .admin-col', (cols) => cols.length), 30);
+    assert.equal(await admin.$$eval('.admin-card:has-text("When games start") .admin-col', (cols) => cols.length), 24);
+    assert.match(await admin.textContent('.admin-card:has-text("From new game to finished")'), /Created\d+.*First move made/);
+    // Hover shows a tooltip; every chart has a table view.
+    await admin.hover('.admin-card:has-text("New games per day") .admin-col:last-child');
+    assert.equal(await admin.isVisible('.admin-card:has-text("New games per day") .admin-col:last-child .admin-tip'), true);
+    assert.ok(await admin.$$eval('.admin-table', (tables) => tables.length) >= 2);
+    const text = await admin.textContent('#admin-content');
+    assert.doesNotMatch(text, /[a-f0-9]{16}/, 'no game links or tokens on the page');
+    // The token is remembered for this tab only, and Sign out forgets it.
+    await admin.reload();
+    await admin.waitForSelector('.admin-kpis');
+    await admin.setViewportSize({ width: 375, height: 760 });
+    assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'no horizontal scroll at 375 px');
+    await admin.click('#admin-signout');
+    assert.equal(await admin.isVisible('#admin-signin'), true);
+    assert.equal(await admin.evaluate(() => sessionStorage.getItem('monobank:admin')), null);
+    assert.deepEqual(adminErrors, []);
+    await admin.close();
   });
 
   await t.test('logs no console or CSP errors', () => {
