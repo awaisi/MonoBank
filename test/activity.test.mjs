@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, performAction, publicGame, spectatorView, activityStats, ledgerPage, ledgerCsv, TRANSACTION_LIMIT, LEDGER_WINDOW, LEDGER_PAGE } from '../lib/game.mjs';
+import { createGame, performAction, publicGame, spectatorView, activityStats, ledgerPage, ledgerCsv, balancesHidden, spectatorLedgerPage, TRANSACTION_LIMIT, LEDGER_WINDOW, LEDGER_PAGE } from '../lib/game.mjs';
 import { createAppServer } from '../server.mjs';
 import { GameStore } from '../lib/store.mjs';
 
@@ -181,7 +181,7 @@ test('API pages through older activity for players and spectators', async (t) =>
 
 test('API downloads the activity as CSV for players and spectators', async (t) => {
   const { store, base } = await startServer(t);
-  const game = await store.create({ players: ['Ana', 'Ben'] });
+  const game = await store.create({ players: ['Ana', 'Ben'], rules: { showAllBalances: true } });
   transfers(game, 2);
   await store.save(game);
   const response = await fetch(`${base}/api/games/${game.id}/activity.csv`);
@@ -196,4 +196,45 @@ test('API downloads the activity as CSV for players and spectators', async (t) =
   const watchedText = await watched.text();
   assert.equal(watchedText, text);
   assert.ok(!watchedText.includes(game.id), 'the export never contains the game ID');
+});
+
+// ------------------------------------------------------ private balances ----
+
+test('private balances: spectators get no cash, net worth, ranks or per-move balances until the game ends', async (t) => {
+  const { store, base } = await startServer(t);
+  const game = await store.create({ players: ['Ana', 'Ben'] });
+  assert.equal(game.rules.showAllBalances, false, 'private by default');
+  transfers(game, LEDGER_WINDOW + 5);
+  await store.save(game);
+  const view = await (await fetch(`${base}/api/watch/${game.viewToken}`)).json();
+  assert.deepEqual(view.players.map((entry) => entry.balance), [null, null]);
+  assert.deepEqual(view.standings.map((row) => [row.cash, row.total, row.raisable, row.rank]), [[null, null, null, null], [null, null, null, null]]);
+  assert.ok(view.standings.every((row) => row.property === 0), 'deed values stay (deeds are public)');
+  assert.ok(view.transactions.every((entry) => !('balances' in entry)), 'no per-move balances');
+  assert.ok(view.transactions.some((entry) => entry.amount != null), 'payments themselves stay visible');
+  const page = await (await fetch(`${base}/api/watch/${game.viewToken}/transactions?before=${view.transactions.at(-1).id}`)).json();
+  assert.ok(page.transactions.length > 0 && page.transactions.every((entry) => !('balances' in entry)));
+  const csv = await (await fetch(`${base}/api/watch/${game.viewToken}/activity.csv`)).text();
+  assert.doesNotMatch(csv.split('\r\n')[0], /balance/, 'no balance columns for spectators');
+  // Players' own payloads are unchanged; the client decides what each phone shows.
+  const playerView = await (await fetch(`${base}/api/games/${game.id}`)).json();
+  assert.equal(typeof playerView.players[0].balance, 'number');
+  assert.match((await (await fetch(`${base}/api/games/${game.id}/activity.csv`)).text()).split('\r\n')[0], /Ana balance/);
+  // Game over reveals everything.
+  performAction(game, { type: 'end-game' });
+  await store.save(game);
+  const ended = await (await fetch(`${base}/api/watch/${game.viewToken}`)).json();
+  assert.equal(typeof ended.players[0].balance, 'number');
+  assert.ok(ended.transactions.some((entry) => Array.isArray(entry.balances)));
+});
+
+test('games saved before the setting existed keep their balances visible', () => {
+  const game = makeGame(['Ana', 'Ben']);
+  delete game.rules.showAllBalances;
+  assert.equal(balancesHidden(game), false);
+  assert.equal(typeof spectatorView(game).players[0].balance, 'number');
+  const open = makeGame(['Ana', 'Ben'], { rules: { showAllBalances: true } });
+  assert.equal(balancesHidden(open), false);
+  assert.equal(balancesHidden(makeGame(['Ana', 'Ben'])), true);
+  assert.equal(spectatorLedgerPage(open, open.transactions[0].id).transactions.length, 0);
 });

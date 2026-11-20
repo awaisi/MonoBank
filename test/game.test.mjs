@@ -68,6 +68,15 @@ test('uses classic rules by default and validates house rules', () => {
   assert.equal(normalizeRules({ freeParkingSeed: 500 }).freeParkingSeed, 0, 'seed is ignored without the jackpot');
 });
 
+test('balances are private by default; the table can choose to show everyone’s money', () => {
+  assert.equal(makeGame().rules.showAllBalances, false);
+  assert.equal(normalizeRules({ showAllBalances: true }).showAllBalances, true);
+  assert.throws(() => normalizeRules({ showAllBalances: 'yes' }), /Show everyone’s money must be on or off/);
+  const open = createGame({ players: ['Ana', 'Ben'], rules: { showAllBalances: true } });
+  assert.match(open.transactions[0].detail, /Everyone sees all balances/, 'recorded in the opening entry');
+  assert.doesNotMatch(makeGame().transactions[0].detail, /balances/);
+});
+
 test('Free Parking jackpot collects payments and reseeds the pot', () => {
   const game = makeRulesGame({ freeParkingJackpot: true, freeParkingSeed: 500 });
   const [first, second] = game.players;

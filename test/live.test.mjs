@@ -134,7 +134,8 @@ test('server.close ends open streams instead of hanging', async () => {
 
 test('spectator link shows the game read-only and never reveals the edit ID', async (t) => {
   const { base, post } = await start(t);
-  const game = await (await post('/api/games', { players: ['Ana', 'Ben'] })).json();
+  // Balances visible to all, so the spectator payload can be checked for them too.
+  const game = await (await post('/api/games', { players: ['Ana', 'Ben'], rules: { showAllBalances: true } })).json();
   assert.match(game.viewToken, /^[a-f0-9]{16}$/);
   assert.notEqual(game.viewToken, game.id);
   await post(`/api/games/${game.id}/actions`, { type: 'transfer', fromId: game.players[0].id, toId: 'bank', amount: 50 });
@@ -161,7 +162,7 @@ test('spectator link shows the game read-only and never reveals the edit ID', as
 
 test('spectator streams receive live updates without the edit ID', async (t) => {
   const { base, post } = await start(t);
-  const game = await (await post('/api/games', { players: ['Ana', 'Ben'] })).json();
+  const game = await (await post('/api/games', { players: ['Ana', 'Ben'], rules: { showAllBalances: true } })).json();
   const spectator = await subscribe(t, `${base}/api/watch/${game.viewToken}/events`);
   const player = await subscribe(t, `${base}/api/games/${game.id}/events`);
   assert.equal((await gameState(await spectator.next())).id, null);

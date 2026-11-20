@@ -20,7 +20,8 @@ Live at **https://monobank.divviq.app**.
 - **Net worth** in each player's sheet, and **Finish game** at any time: pick the winner from the players still in (or let net worth decide), then see the final standings.
 - **No overdrafts:** a player can't spend more than they have. MonoBank shows how much is missing and offers to mortgage deeds or sell buildings first, or to declare bankruptcy.
 - **Sets view:** on **Deeds**, switch **List | Sets** to see every color group in one screen: who owns each deed, houses and hotels, mortgages, complete sets, and who is one deed away.
-- **Player tiles:** one row of tiles at the top of every tab shows each player's balance, net worth, deed count and status. Tap a player for their sheet (breakdown, deeds, one-tap quick actions). On **Deeds** the same tiles filter deeds by owner.
+- **Private balances by default:** each phone sees only its own player's cash and net worth, like keeping your money face down; everything is revealed when the game ends. Turn on **Show everyone's money** at setup to keep balances open.
+- **Player tiles:** one row of tiles at the top of every tab shows each player's balance (your own, or everyone's with open balances), net worth, deed count and status. Tap a player for their sheet (breakdown, deeds, one-tap quick actions). On **Deeds** the same tiles filter deeds by owner.
 - **Per-player quick actions:** Passed GO, Income Tax, Luxury Tax, Jail fee or any amount to or from the Bank, in one tap from the player's sheet.
 - **Activity built for long games:** the full history in 15-minute blocks with clock times, filters by player, type and search, each player's money in/out with their balance after every move, a "Game so far" summary, and a CSV download.
 - **QR code** to join a game from another phone.
@@ -64,10 +65,10 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ## Testing
 
 ```bash
-npm test           # 150 unit and API tests (node:test)
+npm test           # 153 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report
 npm run coverage:check  # fails unless lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs, lib/admin.mjs and public/qr.js have 100% line coverage (CI runs this)
-npm run e2e        # 36 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run e2e        # 37 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available. CI installs Playwright in a scratch folder (outside the repo, found through `NODE_PATH`) and sets `E2E_REQUIRED=1`, so there a missing browser fails the run instead of skipping it.
@@ -100,6 +101,7 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 - **Who's on this phone:** the first time a device opens a game, it asks *"Who's playing on this phone?"*. Pick a player or **I'm the banker**. The choice is remembered on that device for that game. It shows **Playing as Ana** next to the house rules, puts your tile first (with a **You** badge), and pre-fills *From* in payments, *Player one* in trades, the buyer in the deed desk and the payer when collecting rent. Tap your own tile on **Deeds** to see only your deeds. Change it any time with **Switch** or **⋯ → Switch player…**. It's a convenience view: every device can still bank for anyone, as at a real table.
 - **Live updates:** every game screen keeps a live connection to the server. When anyone acts, every phone and spectator updates within a moment, with a short chime. The dot in the game code turns amber while reconnecting, and the app falls back to checking every few seconds until the live connection returns.
 - **Spectators:** **Invite → Spectators** (or **⋯ → Copy spectator link**) gives a `/watch/<token>` link and QR code. Spectators see balances, deeds, standings and activity live, but get no payment, trade, bankruptcy, undo or end-game controls, and the server has no write route for spectator links. The spectator token is separate from the game ID, so a spectator can't work out the player link.
+- **Private balances:** unless the table turned on **Show everyone's money**, a phone sees only the money of the player it is set to ("This phone is me"). A banker-only phone and spectators see no balances until the game ends. Payments, deeds and buildings stay visible to everyone, as at a real table. This is a courtesy of the display, not a lock: every player has the game link, and a phone can switch players. Only spectator links get balances removed on the server.
 - **QR code:** **Invite** in the header shows a scannable code for the player link (or the spectator link). It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
 - **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **⋯ → Sound & vibration** in the header turns this on or off for the current device.
 
@@ -116,6 +118,7 @@ Open **House rules** on the new-game screen to choose how your table plays. Rule
 | Auctions | On | Off: unbought deeds can only be bought at list price; the auction option disappears. |
 | Even building | On | Off: houses can be built and sold unevenly across a color set (owning the full set is still required). |
 | Mortgage interest | 10% | Interest added when unmortgaging, from 0% to 100%. |
+| Show everyone's money | Off | Off: each phone sees only its own player's cash and net worth (others show `••••` in the tiles, player sheet, identity picker and Finish game dialog, and Activity hides their balance after each move); spectators get no balances from the server; everything is revealed when the game ends. On: everyone sees all balances. Games created before this setting keep open balances. |
 
 Games created through the API without `rules` use the defaults above, which match the classic rules.
 

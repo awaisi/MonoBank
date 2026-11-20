@@ -70,9 +70,13 @@ test('MonoBank UI flows', { skip: skipReason }, async (t) => {
     await page.check('#rule-free-parking');
     await page.fill('#rule-free-parking-seed', '100');
     assert.equal(await page.textContent('#setup-rules-summary'), '1 house rule');
+    assert.equal(await page.isChecked('#rule-show-balances'), false, 'balances are private unless the table opts in');
+    // This walkthrough checks everyone's balances, so it turns on "Show everyone's money".
+    await page.check('#rule-show-balances');
+    assert.equal(await page.textContent('#setup-rules-summary'), '2 house rules');
     await page.click('#setup-form button[type=submit]');
     await page.waitForSelector('#game-screen:not([hidden])');
-    assert.match(await page.textContent('#rules-line'), /Free Parking jackpot \(seeded \$100\)/);
+    assert.match(await page.textContent('#rules-line'), /Free Parking jackpot \(seeded \$100\).*Everyone sees all balances/);
     assert.deepEqual(await balances(), ['$1,500', '$1,500', '$1,500', '$100']);
   });
 
@@ -539,7 +543,7 @@ test('MonoBank UI flows', { skip: skipReason }, async (t) => {
   });
 
   await t.test('activity page handles a long game: timeline, filters, player view, paging, export', async () => {
-    const long = await store.create({ players: ['Ana', 'Ben', 'Cy'], rules: { freeParkingJackpot: true } });
+    const long = await store.create({ players: ['Ana', 'Ben', 'Cy'], rules: { freeParkingJackpot: true, showAllBalances: true } });
     const [ana, ben, cy] = long.players;
     const act = (action) => performAction(long, action);
     act({ type: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
@@ -767,6 +771,63 @@ test('MonoBank UI flows', { skip: skipReason }, async (t) => {
     assert.equal(await admin.evaluate(() => sessionStorage.getItem('monobank:admin')), null);
     assert.deepEqual(adminErrors, []);
     await admin.close();
+  });
+
+  await t.test('private balances: each phone sees only its own money until the game ends', async () => {
+    const secret = await store.create({ players: ['Ana', 'Ben', 'Cy'] });
+    const [ana, ben] = secret.players;
+    performAction(secret, { type: 'buy', playerId: ben.id, propertyId: 'boardwalk' });
+    performAction(secret, { type: 'transfer', fromId: 'bank', toId: ana.id, amount: 200, note: 'Passed GO' });
+    await store.save(secret);
+    const phone = await browser.newPage({ viewport: { width: 375, height: 760 } });
+    const phoneErrors = [];
+    phone.on('console', (message) => { if (message.type() === 'error') phoneErrors.push(message.text()); });
+    await phone.goto(`${base}/game/${secret.id}`);
+    // The identity picker doesn't reveal anyone's balance.
+    assert.deepEqual(await phone.$$eval('#identity-options [data-identity] small', (items) => items.slice(0, 3).map((item) => item.textContent)), ['Balance hidden', 'Balance hidden', 'Balance hidden']);
+    await phone.click('#identity-options [data-identity]:has-text("Ana")');
+    const tile = (name) => `#players-bar .player-tile:has(.tile-name:text-is("${name}"))`;
+    assert.equal(await phone.textContent(`${tile('Ana')} .tile-balance`), '$1,700', 'my own balance is visible');
+    assert.match(await phone.textContent(`${tile('Ana')}`), /Net worth \$1,700/);
+    assert.equal(await phone.textContent(`${tile('Ben')} .tile-balance`), '••••', "other players' balances are hidden");
+    assert.match(await phone.textContent(`${tile('Ben')}`), /Balance hidden.*1 deed/, 'deeds stay public');
+    assert.doesNotMatch(await phone.textContent('#players-bar'), /\$1,100|\$1,500/, 'no other balance anywhere in the tiles');
+    await phone.click(`${tile('Ben')}`);
+    await phone.waitForSelector('#player-dialog[open]');
+    assert.match(await phone.textContent('#player-dialog .dialog-facts'), /Cash••••Net worth••••Can raise••••/);
+    assert.match(await phone.textContent('#player-dialog'), /Only Ben’s phone sees this player’s money/);
+    assert.match(await phone.textContent('#player-dialog .sheet-deeds'), /Boardwalk/);
+    await phone.click('#player-dialog [data-close-dialog]');
+    // Activity: payments stay visible, but not another player's balance after each move.
+    await phone.click('#mobile-nav [data-mobile-view="ledger"]');
+    await phone.selectOption('#ledger-filter', { label: 'Ben' });
+    assert.doesNotMatch(await phone.textContent('#full-ledger'), /balance \$/);
+    await phone.selectOption('#ledger-filter', { label: 'Ana (you)' });
+    assert.match(await phone.textContent('#full-ledger'), /balance \$1,700/);
+    await phone.selectOption('#ledger-filter', 'all');
+    // Finish game doesn't reveal who leads.
+    await phone.click('#menu-button');
+    await phone.click('#end-game');
+    await phone.waitForSelector('#end-dialog[open]');
+    const finish = await phone.textContent('#end-dialog');
+    assert.match(finish, /Decided from everyone’s money when you finish/);
+    assert.doesNotMatch(finish, /\$\d/, 'no amounts in the winner picker');
+    assert.equal(await phone.textContent('#end-submit-label'), 'End game · highest net worth wins');
+    await phone.click('#end-form button[type=submit]');
+    await phone.waitForSelector('#results-dialog[open]');
+    assert.match(await phone.textContent('#results-dialog'), /\$1,500/, 'game over reveals everyone');
+    await phone.click('#results-dialog [data-close-dialog]');
+    assert.equal(await phone.textContent(`${tile('Ben')} .tile-balance`), '$1,100');
+    // Spectators of a running private game see no balances at all.
+    performAction(secret, { type: 'undo' });
+    await store.save(secret);
+    const viewer = await browser.newPage({ viewport: { width: 375, height: 760 } });
+    await viewer.goto(`${base}/watch/${secret.viewToken}`);
+    await viewer.waitForSelector('#players-bar .player-tile');
+    assert.deepEqual(await viewer.$$eval('#players-bar .player-tile:not(.plain) .tile-balance', (items) => items.map((item) => item.textContent)), ['••••', '••••', '••••']);
+    await viewer.close();
+    assert.deepEqual(phoneErrors, []);
+    await phone.close();
   });
 
   await t.test('logs no console or CSP errors', () => {
