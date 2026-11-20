@@ -19,6 +19,9 @@ Live at **https://monobank.divviq.app**.
 - **Bankruptcy**: hand a player's cash and deeds to their creditor or the Bank; the last player standing wins.
 - **Net worth** on every player card, and an **End game** results screen with final standings.
 - **QR code** to join a game from another phone.
+- **Live on every phone:** payments appear on every device the moment they happen (server-sent events, with polling as a fallback).
+- **"This phone is me":** each device picks its player (or the banker) for a personal view: your balance first, a **You** badge, and your name pre-filled.
+- **Spectator link:** a separate view-only link and QR code for people watching the game; it can't change anything and never reveals the game's edit link.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
 - Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand and the tagline “Unofficial Monopoly® banker”; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **End game**.
@@ -56,9 +59,9 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ## Testing
 
 ```bash
-npm test           # 89 unit and API tests (node:test)
-npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # browser test of the main flows with Playwright (skipped if Playwright isn't installed)
+npm test           # 106 unit and API tests (node:test)
+npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
+npm run e2e        # 21 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available.
@@ -72,7 +75,10 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 
 ## Joining and feedback
 
-- **QR code:** **Invite** in the header shows a scannable code for the game link. It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
+- **Who's on this phone:** the first time a device opens a game, it asks *"Who's playing on this phone?"*. Pick a player or **I'm the banker**. The choice is remembered on that device for that game. It shows **Playing as Ana · $1,200 · net worth $1,600** under the title, marks your card **You**, pre-fills *From* in payments, *Player one* in trades, the buyer in the deed desk and the payer when collecting rent, and adds a **My deeds** filter. Change it any time with **Switch** or **⋯ → Switch player…**. It's a convenience view: every device can still bank for anyone, as at a real table.
+- **Live updates:** every game screen keeps a live connection to the server. When anyone acts, every phone and spectator updates within a moment, with a short chime. The dot in the game code turns amber while reconnecting, and the app falls back to checking every few seconds until the live connection returns.
+- **Spectators:** **Invite → Spectators** (or **⋯ → Copy spectator link**) gives a `/watch/<token>` link and QR code. Spectators see balances, deeds, standings and activity live, but get no payment, trade, bankruptcy, undo or end-game controls, and the server has no write route for spectator links. The spectator token is separate from the game ID, so a spectator can't work out the player link.
+- **QR code:** **Invite** in the header shows a scannable code for the player link (or the spectator link). It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
 - **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **⋯ → Sound & vibration** in the header turns this on or off for the current device.
 
 ## House rules
@@ -217,7 +223,9 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 ## API overview
 
 - `POST /api/games` — create a game: `{ "players": ["Ana", "Ben"], "startingBalance": 1500, "rules": { "freeParkingJackpot": true, "freeParkingSeed": 500 } }` (`rules` is optional; omitted keys use the defaults)
-- `GET /api/games/:id` — read current game state, including `rules`, `freeParking` (pot balance), each player's `inJail` and `bankrupt`, `status` (`active`/`ended`), `winnerIds`, `standings` (net worth breakdown and rank per player), and `undo` (the action that undo would reverse, or `null`)
+- `GET /api/games/:id/events` — **server-sent events** stream: an `event: game` message with the full public state on connect and after every change, plus a heartbeat comment every 25 s. Up to 50 streams per game and 2,000 in total (HTTP 503 beyond that).
+- `GET /api/watch/:token` and `GET /api/watch/:token/events` — the **spectator** equivalents: the same state with `id: null`, `spectator: true` and `undo: null`. There are no write routes for spectator tokens.
+- `GET /api/games/:id` — read current game state, including `viewToken` (the spectator token, for sharing), `rules`, `freeParking` (pot balance), each player's `inJail` and `bankrupt`, `status` (`active`/`ended`), `winnerIds`, `standings` (net worth breakdown and rank per player), and `undo` (the action that undo would reverse, or `null`)
 - `POST /api/games/:id/actions` — perform one action, selected by `type`:
 
   | `type` | Fields | Notes |

@@ -67,6 +67,16 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.deepEqual(await balances(), ['$1,500', '$1,500', '$1,500', '$100']);
   });
 
+  await t.test('asks who this phone is for, offering every player and the banker', async () => {
+    await page.waitForSelector('#identity-dialog[open]');
+    const options = await page.$$eval('#identity-options [data-identity]', (buttons) => buttons.map((button) => (button.dataset.identity === 'banker' ? 'banker' : button.querySelector('strong').textContent)));
+    assert.deepEqual(options, ['Ana', 'Ben', 'Cy', 'banker']);
+    await page.click('#identity-options [data-identity="banker"]');
+    await toast('This phone is the banker.');
+    assert.match(await page.textContent('#me-text'), /Banker view/);
+    assert.equal(await page.isVisible('.you-badge'), false);
+  });
+
   await t.test('game pages keep the disclaimer and get their own title', async () => {
     assert.match(await page.title(), /^Game [0-9A-F]{4} · MonoBank$/);
     assert.match(await page.textContent('.site-footer .trademark'), /Hasbro, Inc\./);
@@ -83,7 +93,10 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     for (const id of ['#share-game', '#sound-toggle', '#end-game']) assert.equal(await page.isVisible(id), true, id);
     assert.equal(await page.evaluate(() => document.activeElement.id), 'share-game', 'focus moves into the menu');
     await page.keyboard.press('ArrowDown');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'sound-toggle');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'copy-watch');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'end-game', 'arrow keys wrap around');
     await page.keyboard.press('Escape');
     assert.equal(await page.isVisible('#game-menu'), false);
     assert.equal(await page.evaluate(() => document.activeElement.id), 'menu-button');
@@ -117,6 +130,25 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.match(await page.textContent('.player-card .player-meta'), /1 deed · Net worth \$1,500/);
   });
 
+  await t.test('"this phone is me" personalises the view and is remembered', async () => {
+    await page.click('#menu-button');
+    await page.click('#switch-player');
+    await page.click('#identity-options .identity-option:has-text("Ana")');
+    await toast('This phone is Ana.');
+    assert.match(await page.textContent('#me-text'), /Playing as Ana · \$1,100 · net worth \$1,500/);
+    assert.equal(await page.textContent('.player-card.is-me strong'), 'Ana');
+    assert.equal(await page.textContent('.player-card.is-me .you-badge'), 'You');
+    assert.equal(await page.$eval('#payment-from', (select) => select.selectedOptions[0].textContent), 'Ana');
+    await page.click('[data-view=deeds]');
+    await page.selectOption('#deed-filter', 'mine');
+    assert.deepEqual(await page.$$eval('#deed-grid .deed-card strong', (cards) => cards.map((card) => card.textContent)), ['Boardwalk']);
+    await page.selectOption('#deed-filter', 'all');
+    await page.reload();
+    await page.waitForSelector('#game-screen:not([hidden])');
+    assert.equal(await page.isVisible('#identity-dialog[open]'), false, 'choice remembered on this device');
+    assert.match(await page.textContent('#me-text'), /Playing as Ana/);
+  });
+
   await t.test('declares a bankruptcy to another player', async () => {
     await page.click('[data-view=pay]');
     await page.click('.bankruptcy summary');
@@ -147,6 +179,72 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(styles.button, 'rgb(178, 60, 53)');
   });
 
+  await t.test('shows the bankrupt player on their own device', async () => {
+    assert.match(await page.textContent('#me-text'), /Playing as Ana · bankrupt/);
+  });
+
+  const watchErrors = (other) => {
+    other.on('pageerror', (error) => errors.push(error.message));
+    other.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+    other.on('dialog', (dialog) => dialog.accept());
+  };
+  const payBenToBank = async (amount) => {
+    await page.click('[data-view=pay]');
+    await page.selectOption('#payment-from', { label: 'Ben' });
+    await page.selectOption('#payment-to', { label: 'The Bank' });
+    await page.fill('#payment-amount', String(amount));
+    await page.click('#payment-form button[type=submit]');
+    await toast('Funds transferred.');
+  };
+  const balanceShown = (other, value) => other.waitForFunction((expected) => [...document.querySelectorAll('#player-cards .balance')].some((element) => element.textContent === expected), value, { timeout: 2500 });
+
+  await t.test('updates other devices instantly over the live stream', async () => {
+    const other = await browser.newPage();
+    watchErrors(other);
+    await other.goto(page.url());
+    await other.waitForSelector('#identity-dialog[open]');
+    await other.click('#identity-options [data-identity="banker"]');
+    await other.waitForFunction(() => !document.querySelector('#session-badge').classList.contains('polling'));
+    await payBenToBank(25);
+    const started = Date.now();
+    await balanceShown(other, '$1,475');
+    assert.ok(Date.now() - started < 2500, 'arrived faster than polling would');
+    await other.close();
+  });
+
+  await t.test('spectator link is view-only, hides the edit link, and updates live', async () => {
+    const gameId = page.url().split('/').pop();
+    await page.click('#show-qr');
+    await page.click('.qr-modes label:has-text("Spectators")');
+    const watchUrl = await page.textContent('#qr-url');
+    assert.match(watchUrl, /\/watch\/[a-f0-9]{16}$/);
+    assert.equal(watchUrl.includes(gameId), false);
+    assert.match(await page.textContent('#qr-help'), /can’t change anything/);
+    await page.waitForSelector('#qr-dialog svg');
+    await page.click('#qr-dialog [data-close-dialog]');
+
+    const viewer = await browser.newPage();
+    watchErrors(viewer);
+    await viewer.goto(watchUrl);
+    await viewer.waitForSelector('#game-screen:not([hidden])');
+    assert.equal(await viewer.isVisible('#identity-dialog[open]'), false, 'spectators are not asked who they are');
+    assert.equal(await viewer.isVisible('#spectator-note'), true);
+    assert.equal(await viewer.textContent('#session-code'), 'VIEW');
+    assert.match(await viewer.title(), /Watching a game · MonoBank/);
+    for (const selector of ['#pay-view', '#trade-view', '.view-tabs [data-view="pay"]', '.view-tabs [data-view="trade"]', '.activity-panel [data-undo]', '#end-game', '#switch-player', '#copy-watch', '#me-bar']) {
+      assert.equal(await viewer.$eval(selector, (element) => getComputedStyle(element).display === 'none' || element.hidden), true, selector);
+    }
+    assert.equal(await viewer.evaluate((id) => document.documentElement.outerHTML.includes(id), gameId), false, 'edit ID never reaches the spectator page');
+    await viewer.waitForFunction(() => !document.querySelector('#session-badge').classList.contains('polling'));
+    await payBenToBank(25);
+    await balanceShown(viewer, '$1,450');
+    await viewer.click('.view-tabs [data-view="deeds"]');
+    await viewer.click('[data-property-id=boardwalk]');
+    assert.match(await viewer.textContent('#deed-dialog'), /View only/);
+    assert.equal(await viewer.$('#rent-form'), null);
+    await viewer.close();
+  });
+
   await t.test('ends the game and shows results, then undoes game over', async () => {
     await page.click('#menu-button');
     await page.click('#end-game');
@@ -163,7 +261,8 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   await t.test('renders a QR code for the game link', async () => {
     await page.click('#show-qr');
     await page.waitForSelector('#qr-dialog[open] svg');
-    assert.equal(await page.textContent('#qr-url'), page.url());
+    assert.equal(await page.textContent('#qr-url'), page.url(), 'Invite reopens on the player link');
+    assert.equal(await page.isChecked('input[name="qr-mode"][value="play"]'), true);
     await page.click('#qr-dialog [data-close-dialog]');
   });
 
