@@ -93,6 +93,24 @@ You need permission to create app registrations, role assignments, repository se
 
 For tighter least privilege, run the first deployment with Contributor at subscription scope, then replace it with a custom role restricted to the generated resource group while retaining permission to execute subscription-scope deployments.
 
+### Custom domain (Cloudflare)
+
+The deploy workflow serves the app at `https://monobank.divviq.app` (override with the repository variable `CUSTOM_DOMAIN`, or set it to `none` to disable). On each deploy it:
+
+1. Creates/updates two DNS records in Cloudflare: `CNAME monobank → <app>.<environment>.azurecontainerapps.io` (**DNS only**, grey cloud) and `TXT asuid.monobank → <Container Apps verification ID>`.
+2. Attaches the hostname to the container app and, on first run, has Azure issue a free **managed TLS certificate** and bind it. Later deploys reuse that certificate; Azure renews it automatically.
+
+Keep the record **DNS only**. Azure validates and renews the managed certificate through the CNAME, which fails if Cloudflare proxies it.
+
+Required repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token from *My Profile → API Tokens → Create Token → Edit zone DNS*, limited to the `divviq.app` zone (permission **Zone → DNS → Edit**) |
+| `CLOUDFLARE_ZONE_ID` | Zone ID shown on the `divviq.app` overview page in the Cloudflare dashboard (right-hand column, *API* section) |
+
+If the secrets are missing, the workflow skips the custom domain with a warning and the app stays on its `azurecontainerapps.io` URL.
+
 ### Deployment flow
 
 Every push to `main`:
