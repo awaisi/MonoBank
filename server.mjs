@@ -3,9 +3,10 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GameError, performAction, publicGame } from './lib/game.mjs';
+import { GameError, performAction, publicGame, spectatorView } from './lib/game.mjs';
 import { GameStore } from './lib/store.mjs';
 import { RateLimiter } from './lib/rate-limit.mjs';
+import { GameStreams } from './lib/streams.mjs';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -58,10 +59,11 @@ function enforce(limiter, key) {
   }
 }
 
-export function createAppServer({ store = new GameStore(), limits = {}, trustProxy = false } = {}) {
+export function createAppServer({ store = new GameStore(), limits = {}, trustProxy = false, streams: streamOptions = {} } = {}) {
   const { createPerHour, apiPerMinute } = { ...DEFAULT_LIMITS, ...limits };
   const createLimiter = new RateLimiter({ limit: createPerHour, windowMs: HOUR });
   const apiLimiter = new RateLimiter({ limit: apiPerMinute, windowMs: MINUTE });
+  const streams = new GameStreams({ ...streamOptions, headers: securityHeaders });
 
   const server = createNodeServer(async (req, res) => {
     try {
@@ -78,19 +80,29 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         const game = await store.create(await readJson(req));
         return sendJson(res, 201, publicGame(game));
       }
-      const match = url.pathname.match(/^\/api\/games\/([a-f0-9]{16})(?:\/actions)?$/);
+      const match = url.pathname.match(/^\/api\/games\/([a-f0-9]{16})(\/actions|\/events)?$/);
       if (match) {
         const game = await store.get(match[1]);
-        if (req.method === 'GET' && !url.pathname.endsWith('/actions')) return sendJson(res, 200, publicGame(game));
-        if (req.method === 'POST' && url.pathname.endsWith('/actions')) {
+        const [, , sub] = match;
+        if (req.method === 'GET' && !sub) return sendJson(res, 200, publicGame(game));
+        if (req.method === 'GET' && sub === '/events') return streams.open(req, res, game, publicGame);
+        if (req.method === 'POST' && sub === '/actions') {
           performAction(game, await readJson(req));
           await store.save(game);
+          streams.publish(game);
           return sendJson(res, 200, publicGame(game));
         }
       }
+      const watch = url.pathname.match(/^\/api\/watch\/([a-f0-9]{16})(\/events)?$/);
+      if (watch && req.method === 'GET') {
+        const game = await store.getByWatchToken(watch[1]);
+        if (watch[2]) return streams.open(req, res, game, spectatorView);
+        return sendJson(res, 200, spectatorView(game));
+      }
       if (url.pathname.startsWith('/api/')) throw new GameError('Not found.', 404);
 
-      const requested = url.pathname === '/' || url.pathname.startsWith('/game/') ? 'index.html' : url.pathname.slice(1);
+      const appRoute = url.pathname.startsWith('/game/') || url.pathname.startsWith('/watch/');
+      const requested = url.pathname === '/' || appRoute ? 'index.html' : url.pathname.slice(1);
       const safePath = normalize(requested).replace(/^(\.\.[/\\])+/, '');
       const filePath = join(ROOT, safePath);
       if (!filePath.startsWith(ROOT)) throw new GameError('Not found.', 404);
@@ -105,7 +117,7 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         'Cache-Control': 'no-cache',
         ETag: etag,
         // Game links are private sessions: keep them out of search results.
-        ...(url.pathname.startsWith('/game/') ? { 'X-Robots-Tag': 'noindex, nofollow' } : {})
+        ...(appRoute ? { 'X-Robots-Tag': 'noindex, nofollow' } : {})
       };
       if (req.headers['if-none-match'] === etag) {
         res.writeHead(304, headers);
@@ -127,6 +139,13 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
   }, 15 * MINUTE);
   sweep.unref();
   server.on('close', () => clearInterval(sweep));
+  // Open event streams would keep close() waiting forever, so end them first.
+  const close = server.close.bind(server);
+  server.close = (callback) => {
+    streams.closeAll();
+    return close(callback);
+  };
+  server.streams = streams;
   return server;
 }
 
