@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { GameError, performAction, publicGame, spectatorView, ledgerPage, ledgerCsv } from './lib/game.mjs';
+import { GameError, performAction, publicGame, spectatorView, ledgerPage, ledgerCsv, spectatorLedgerPage, balancesHidden } from './lib/game.mjs';
 import { GameStore } from './lib/store.mjs';
 import { RateLimiter } from './lib/rate-limit.mjs';
 import { GameStreams } from './lib/streams.mjs';
@@ -53,8 +53,8 @@ function sendJson(res, status, value, headers = {}) {
   res.end(body);
 }
 
-function sendCsv(res, game) {
-  const [body, encoding] = compressDynamic(res.req, Buffer.from(ledgerCsv(game)));
+function sendCsv(res, game, options) {
+  const [body, encoding] = compressDynamic(res.req, Buffer.from(ledgerCsv(game, options)));
   res.writeHead(200, {
     ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', ...encoding,
     'Content-Disposition': `attachment; filename="monobank-activity-${new Date().toISOString().slice(0, 10)}.csv"`
@@ -183,8 +183,8 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
       if (watch && req.method === 'GET') {
         const game = await store.getByWatchToken(watch[1]);
         if (watch[2] === '/events') return openStream(req, res, game, spectatorView);
-        if (watch[2] === '/transactions') return sendJson(res, 200, ledgerPage(game, url.searchParams.get('before'), url.searchParams.get('limit') ?? undefined));
-        if (watch[2] === '/activity.csv') return sendCsv(res, game);
+        if (watch[2] === '/transactions') return sendJson(res, 200, spectatorLedgerPage(game, url.searchParams.get('before'), url.searchParams.get('limit') ?? undefined));
+        if (watch[2] === '/activity.csv') return sendCsv(res, game, { hideBalances: balancesHidden(game) });
         return sendJson(res, 200, spectatorView(game));
       }
       if (url.pathname.startsWith('/api/')) throw new GameError('Not found.', 404);

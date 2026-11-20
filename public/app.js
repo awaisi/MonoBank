@@ -107,6 +107,12 @@ const standingFor = (id) => game.standings?.find((row) => row.playerId === id);
 const propertyById = (id) => game?.properties.find((property) => property.id === id);
 const deedOwner = (propertyId) => playerById(game?.deeds[propertyId]?.ownerId);
 const rules = () => game?.rules || {};
+// Private balances (the default for new games): a phone sees only its own player's cash and net worth until the game
+// ends. Games from before the setting have no `showAllBalances` and stay open. This is a courtesy of the view, not
+// security: every phone has the game link. Spectators get no balances from the server at all.
+const balancesPrivate = () => game?.status !== 'ended' && rules().showAllBalances === false;
+const moneyVisible = (player) => !balancesPrivate() || (!isSpectator() && Boolean(player) && player.id === mePlayer()?.id);
+const HIDDEN = '••••';
 const unmortgageCost = (property) => Math.round(property.mortgage * (1 + (rules().mortgageInterestPercent ?? 10) / 100));
 
 // Mirrors rulesSummary() in lib/game.mjs for display only; the server enforces every rule.
@@ -118,6 +124,7 @@ function rulesSummary(value) {
   if (value.auctions === false) notes.push('No auctions');
   if (value.evenBuilding === false) notes.push('Uneven building allowed');
   if (value.mortgageInterestPercent != null && value.mortgageInterestPercent !== 10) notes.push(`${value.mortgageInterestPercent}% mortgage interest`);
+  if (value.showAllBalances) notes.push('Everyone sees all balances');
   return notes;
 }
 
@@ -130,7 +137,8 @@ function setupRules() {
     noRentInJail: $('#rule-no-rent-jail').checked,
     auctions: $('#rule-auctions').checked,
     evenBuilding: $('#rule-even-building').checked,
-    mortgageInterestPercent: Number($('#rule-mortgage-interest').value || 0)
+    mortgageInterestPercent: Number($('#rule-mortgage-interest').value || 0),
+    showAllBalances: $('#rule-show-balances').checked
   };
 }
 
@@ -402,7 +410,7 @@ function renderPlayersBar() {
     const status = player.bankrupt ? 'Bankrupt' : winner ? '★ Winner' : jailRule && player.inJail ? '🔒 In jail' : '';
     const classes = ['player-tile', isMe && 'is-me', player.bankrupt && 'bankrupt', winner && 'winner', filtering && deedOwnerFilter === player.id && 'active'].filter(Boolean).join(' ');
     const attrs = filtering ? `data-owner="${player.id}" aria-pressed="${deedOwnerFilter === player.id}"` : `data-player="${player.id}" aria-haspopup="dialog"`;
-    return `<button type="button" class="${classes}" ${attrs} data-vars="--player-color=${escapeHtml(player.color)}"><span class="tile-head"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span class="tile-name">${escapeHtml(player.name)}</span>${isMe ? '<span class="you-badge">You</span>' : ''}</span><b class="tile-balance">${player.bankrupt ? '—' : money.format(player.balance)}</b>${player.bankrupt ? '<small class="tile-meta">Out of the game</small>' : `<small class="tile-meta">Net worth ${money.format(worth)}</small><small class="tile-meta">${plural(deedCount(player.id), 'deed')}</small>`}${status ? `<span class="tile-status">${status}</span>` : ''}</button>`;
+    return `<button type="button" class="${classes}" ${attrs} data-vars="--player-color=${escapeHtml(player.color)}"><span class="tile-head"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span class="tile-name">${escapeHtml(player.name)}</span>${isMe ? '<span class="you-badge">You</span>' : ''}</span>${player.bankrupt ? '<b class="tile-balance">—</b><small class="tile-meta">Out of the game</small>' : moneyVisible(player) ? `<b class="tile-balance">${money.format(player.balance)}</b><small class="tile-meta">Net worth ${money.format(worth)}</small><small class="tile-meta">${plural(deedCount(player.id), 'deed')}</small>` : `<b class="tile-balance masked" aria-label="Balance hidden">${HIDDEN}</b><small class="tile-meta">Balance hidden</small><small class="tile-meta">${plural(deedCount(player.id), 'deed')}</small>`}${status ? `<span class="tile-status">${status}</span>` : ''}</button>`;
   };
   const tiles = players.map(tile);
   if (filtering) {
@@ -471,7 +479,7 @@ function refreshSheet() {
     !isSpectator() && !isMe && !player.bankrupt ? '<button type="button" class="secondary" data-sheet="me">This is me</button>' : '',
     canAct && jailRule && !player.bankrupt ? `<button type="button" class="secondary" data-sheet="jail" aria-pressed="${player.inJail}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : ''
   ].filter(Boolean).join('');
-  $('#player-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${escapeHtml(player.color)}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">${isMe ? 'YOU' : 'PLAYER'}</p><h2 id="player-title">${escapeHtml(player.name)}</h2><p class="muted">${status}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Cash</small><strong>${player.bankrupt ? '—' : money.format(player.balance)}</strong></div><div><small>Net worth</small><strong>${money.format(row.total)}</strong></div><div><small>Can raise</small><strong>${money.format(row.raisable)}</strong></div></div><p class="fine-print sheet-breakdown">Net worth = ${money.format(row.cash)} cash + ${money.format(row.property)} deeds + ${money.format(row.buildings)} buildings (resale).</p>${deeds.length ? `<h3 class="sheet-heading">${deeds.length} deed${deeds.length === 1 ? '' : 's'}</h3><ul class="sheet-deeds">${deedRows}</ul>` : '<p class="muted">No deeds.</p>'}${quick}${actions ? `<div class="dialog-actions sheet-actions">${actions}</div>` : ''}</div>`;
+  $('#player-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${escapeHtml(player.color)}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">${isMe ? 'YOU' : 'PLAYER'}</p><h2 id="player-title">${escapeHtml(player.name)}</h2><p class="muted">${status}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div>${moneyVisible(player) ? `<div class="dialog-facts"><div><small>Cash</small><strong>${player.bankrupt ? '—' : money.format(player.balance)}</strong></div><div><small>Net worth</small><strong>${money.format(row.total)}</strong></div><div><small>Can raise</small><strong>${money.format(row.raisable)}</strong></div></div><p class="fine-print sheet-breakdown">Net worth = ${money.format(row.cash)} cash + ${money.format(row.property)} deeds + ${money.format(row.buildings)} buildings (resale).</p>` : `<div class="dialog-facts"><div><small>Cash</small><strong>${HIDDEN}</strong></div><div><small>Net worth</small><strong>${HIDDEN}</strong></div><div><small>Can raise</small><strong>${HIDDEN}</strong></div></div><p class="fine-print sheet-breakdown sheet-private">Only ${escapeHtml(player.name)}’s phone sees this player’s money. Everything is revealed when the game ends.</p>`}${deeds.length ? `<h3 class="sheet-heading">${deeds.length} deed${deeds.length === 1 ? '' : 's'}</h3><ul class="sheet-deeds">${deedRows}</ul>` : '<p class="muted">No deeds.</p>'}${quick}${actions ? `<div class="dialog-actions sheet-actions">${actions}</div>` : ''}</div>`;
   applyStyleVars($('#player-content'));
   $$('[data-quick]', $('#player-content')).forEach((button) => button.addEventListener('click', () => {
     const item = quickActions().find((entry) => entry.key === button.dataset.quick);
@@ -531,7 +539,7 @@ async function quickPay(player, amount, note, category) {
 function openIdentity() {
   const options = activePlayers().map((player) => {
     const index = game.players.indexOf(player);
-    return `<button type="button" class="identity-option ${player.id === me ? 'current' : ''}" data-identity="${player.id}" data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token">${TOKEN_LABELS[index]}</span><span><strong>${escapeHtml(player.name)}</strong><small>${money.format(player.balance)}</small></span></button>`;
+    return `<button type="button" class="identity-option ${player.id === me ? 'current' : ''}" data-identity="${player.id}" data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token">${TOKEN_LABELS[index]}</span><span><strong>${escapeHtml(player.name)}</strong><small>${moneyVisible(player) ? money.format(player.balance) : 'Balance hidden'}</small></span></button>`;
   });
   options.push(`<button type="button" class="identity-option banker ${me === 'banker' ? 'current' : ''}" data-identity="banker"><span class="mini-token">$</span><span><strong>I’m the banker</strong><small>Not playing · see everyone equally</small></span></button>`);
   $('#identity-options').innerHTML = options.join('');
@@ -778,7 +786,7 @@ function ledgerRow(item, viewer = null) {
     const change = cashChange(item, viewer);
     if (change) { amount = `${change > 0 ? '+' : '−'}${money.format(Math.abs(change))}`; tone = change > 0 ? 'in' : 'out'; }
     const balance = item.balances?.[seatIndex(viewer)];
-    if (balance != null) after = ` · balance ${money.format(balance)}`;
+    if (balance != null && moneyVisible(playerById(viewer))) after = ` · balance ${money.format(balance)}`;
   }
   return `<article class="ledger-item ${item.undone ? 'undone' : ''} ${item.type === 'undo' ? 'is-undo' : ''}"><span class="ledger-icon">${transactionIcon(item.type)}</span><span class="ledger-copy"><strong>${escapeHtml(item.label)}</strong><small>${item.undone ? 'Undone · ' : ''}${escapeHtml(item.detail || item.type)}${after}</small></span><span class="ledger-amount"><b class="${tone}">${amount}</b><time datetime="${item.at}">${rowTime(item.at)}</time></span></article>`;
 }
@@ -1019,12 +1027,14 @@ function endGame() {
   const rows = activePlayers().map((player) => ({ player, worth: standingFor(player.id)?.total ?? player.balance }));
   const best = Math.max(...rows.map((row) => row.worth));
   const leaders = rows.filter((row) => row.worth === best).map((row) => row.player.name);
-  const leaderText = leaders.length > 2 ? `${leaders.length}-way tie` : leaders.length > 1 ? `${leaders.join(' & ')} tie` : `${leaders[0]} wins`;
+  // With private balances the dialog must not reveal who leads; the server still decides by net worth.
+  const hidden = balancesPrivate();
+  const leaderText = hidden ? 'highest net worth wins' : leaders.length > 2 ? `${leaders.length}-way tie` : leaders.length > 1 ? `${leaders.join(' & ')} tie` : `${leaders[0]} wins`;
   const options = [
-    `<label class="winner-option"><input type="radio" name="winner" value="" checked><span class="mini-token" aria-hidden="true">★</span><span><strong>Highest net worth</strong><small>${escapeHtml(leaderText)} · ${money.format(best)}</small></span></label>`,
+    `<label class="winner-option"><input type="radio" name="winner" value="" checked><span class="mini-token" aria-hidden="true">★</span><span><strong>Highest net worth</strong><small>${hidden ? 'Decided from everyone’s money when you finish' : `${escapeHtml(leaderText)} · ${money.format(best)}`}</small></span></label>`,
     ...orderedPlayers().filter((player) => !player.bankrupt).map((player) => {
       const worth = standingFor(player.id)?.total ?? player.balance;
-      return `<label class="winner-option" data-vars="--player-color=${escapeHtml(player.color)}"><input type="radio" name="winner" value="${player.id}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span><strong>${escapeHtml(player.name)}</strong><small>Net worth ${money.format(worth)}</small></span></label>`;
+      return `<label class="winner-option" data-vars="--player-color=${escapeHtml(player.color)}"><input type="radio" name="winner" value="${player.id}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span><strong>${escapeHtml(player.name)}</strong><small>${hidden ? 'Net worth hidden' : `Net worth ${money.format(worth)}`}</small></span></label>`;
     })
   ].join('');
   $('#end-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINISH THE GAME</p><h2 id="end-title">Who wins?</h2><p class="muted">End the game now, at any point. Pick the winner from the players still in, or let net worth decide.</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><form id="end-form" class="dialog-form"><fieldset class="winner-options"><legend class="sr-only">Winner</legend>${options}</fieldset><p class="fine-print">Play stops for everyone and the final standings open. Undo reopens the game.</p><button class="danger-button full" type="submit"><span id="end-submit-label"></span><span aria-hidden="true">→</span></button></form></div>`;
