@@ -1,3 +1,5 @@
+import { encodeQr, qrToSvg } from './qr.js';
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -6,6 +8,42 @@ const TOKEN_LABELS = ['M','R','T','♟'];
 let game = null;
 let activeView = 'pay';
 let pollTimer;
+let shownResultsFor = null;
+
+// Payment feedback: a short chime and, where supported, a vibration.
+// Preference is per device (localStorage, best effort).
+const feedback = {
+  enabled: (() => { try { return localStorage.getItem('monobank:sound') !== 'off'; } catch { return true; } })(),
+  context: null,
+  set(on) {
+    this.enabled = on;
+    try { localStorage.setItem('monobank:sound', on ? 'on' : 'off'); } catch { /* storage unavailable */ }
+  },
+  play(kind = 'success') {
+    if (!this.enabled) return;
+    try { navigator.vibrate?.(kind === 'error' ? [70, 50, 70] : kind === 'remote' ? 20 : 40); } catch { /* unsupported */ }
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      this.context ||= new AudioContext();
+      if (this.context.state === 'suspended') this.context.resume();
+      const notes = kind === 'error' ? [220, 165] : kind === 'remote' ? [880] : [660, 990];
+      notes.forEach((frequency, index) => {
+        const start = this.context.currentTime + index * 0.09;
+        const oscillator = this.context.createOscillator();
+        const gain = this.context.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.18, start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+        oscillator.connect(gain).connect(this.context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + 0.18);
+      });
+    } catch { /* audio unavailable */ }
+  }
+};
 
 // The CSP (style-src 'self') blocks style="" attributes parsed from innerHTML,
 // so markup carries data-vars="--name=value;--other=value" and this helper
@@ -23,6 +61,8 @@ function applyStyleVars(root = document) {
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[character]);
 const gameIdFromPath = () => location.pathname.match(/^\/game\/([a-f0-9]{16})\/?$/)?.[1];
 const playerById = (id) => game?.players.find((player) => player.id === id);
+const activePlayers = () => game.players.filter((player) => !player.bankrupt);
+const standingFor = (id) => game.standings?.find((row) => row.playerId === id);
 const propertyById = (id) => game?.properties.find((property) => property.id === id);
 const deedOwner = (propertyId) => playerById(game?.deeds[propertyId]?.ownerId);
 const rules = () => game?.rules || {};
@@ -139,8 +179,10 @@ async function loadGame(silent = false) {
   try {
     const latest = await api(`/api/games/${id}`);
     if (!game || latest.revision !== game.revision) {
+      const remoteChange = game && latest.revision > game.revision;
       game = latest;
       showGame();
+      if (remoteChange) feedback.play('remote');
     }
   } catch (error) {
     if (!silent) {
@@ -172,12 +214,40 @@ function showGame() {
 
 function renderGame() {
   renderRules();
+  renderStatus();
   renderPlayers();
   renderSelects();
   renderDeeds();
   renderTrade();
   renderLedger();
+  renderUndo();
   switchView(activeView);
+  const ended = game.status === 'ended';
+  $$('#game-screen .console-panel button[type="submit"]').forEach((button) => { button.disabled = ended; });
+  if (ended) $$('#parking-form button, .jail-toggle').forEach((button) => { button.disabled = true; });
+  if (ended && shownResultsFor !== game.endedAt) {
+    shownResultsFor = game.endedAt;
+    openResults();
+  }
+}
+
+function winnerText() {
+  const names = game.winnerIds.map((id) => playerById(id)?.name).filter(Boolean);
+  return names.length > 1 ? `${names.join(' & ')} tie` : `${names[0]} wins`;
+}
+
+function renderStatus() {
+  const ended = game.status === 'ended';
+  $('#ended-banner').hidden = !ended;
+  $('#end-game').hidden = ended;
+  if (ended) $('#ended-text').textContent = `Game over: ${winnerText()}`;
+}
+
+function renderUndo() {
+  $$('[data-undo]').forEach((button) => {
+    button.hidden = !game.undo;
+    button.title = game.undo ? `Undo: ${game.undo.label}` : '';
+  });
 }
 
 function renderRules() {
@@ -191,9 +261,15 @@ function renderPlayers() {
   const jailRule = rules().noRentInJail;
   const cards = game.players.map((player, index) => {
     const deeds = Object.values(game.deeds).filter((deed) => deed.ownerId === player.id).length;
-    const status = player.inJail && jailRule ? 'In jail · no rent' : player.balance < 0 ? 'Needs attention' : 'Ready to play';
-    const jailButton = jailRule ? `<button type="button" class="jail-toggle" data-jail-player="${player.id}" aria-pressed="${player.inJail ? 'true' : 'false'}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : '';
-    return `<article class="player-card ${player.inJail && jailRule ? 'in-jail' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${deeds} deed${deeds === 1 ? '' : 's'} · ${status}</div>${jailButton}</article>`;
+    const worth = standingFor(player.id)?.total ?? player.balance;
+    const winner = game.status === 'ended' && game.winnerIds.includes(player.id);
+    const status = player.bankrupt ? 'Bankrupt' : winner ? 'Winner' : player.inJail && jailRule ? 'In jail · no rent' : player.balance < 0 ? 'Needs attention' : 'Ready to play';
+    const meta = player.bankrupt ? 'Out of the game' : `${deeds} deed${deeds === 1 ? '' : 's'} · Net worth ${money.format(worth)}`;
+    if (player.bankrupt) {
+      return `<article class="player-card bankrupt" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">Bankrupt</div><div class="player-meta">${meta}</div></article>`;
+    }
+    const jailButton = jailRule && game.status !== 'ended' ? `<button type="button" class="jail-toggle" data-jail-player="${player.id}" aria-pressed="${player.inJail ? 'true' : 'false'}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : '';
+    return `<article class="player-card ${player.inJail && jailRule ? 'in-jail' : ''} ${winner ? 'winner' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${meta}</div><div class="player-status">${status}</div>${jailButton}</article>`;
   });
   if (rules().freeParkingJackpot) {
     cards.push(`<article class="player-card parking-card" data-vars="--player-color=#d6b661"><div class="player-card-head"><span class="mini-token">P</span><strong>Free Parking</strong></div><div class="balance">${money.format(game.freeParking || 0)}</div><form class="parking-form" id="parking-form"><label class="sr-only" for="parking-winner">Who landed on Free Parking?</label><select id="parking-winner">${optionList()}</select><button type="submit" ${game.freeParking ? '' : 'disabled'}>Collect</button></form></article>`);
@@ -215,7 +291,7 @@ function optionList({ includeBank = false, includeParking = false, selected = ''
   const values = [
     ...(includeBank ? [{ id: 'bank', name: 'The Bank' }] : []),
     ...(includeParking && rules().freeParkingJackpot ? [{ id: 'parking', name: 'Free Parking pot' }] : []),
-    ...game.players
+    ...activePlayers()
   ];
   return values.map((item) => `<option value="${item.id}" ${item.id === selected ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
 }
@@ -227,11 +303,23 @@ function renderSelects() {
   $('#payment-to').innerHTML = optionList({ includeBank: true, includeParking: true, selected: to });
   if ($('#payment-from').value === $('#payment-to').value && game.players[1]) $('#payment-to').value = game.players[1].id;
 
+  const active = activePlayers();
+  const debtor = active.some((player) => player.id === $('#bankrupt-player').value) ? $('#bankrupt-player').value : active[0]?.id;
+  $('#bankrupt-player').innerHTML = optionList({ selected: debtor });
+  renderCreditors();
+
   const first = $('#trade-first').value || game.players[0]?.id;
   const second = $('#trade-second').value || game.players[1]?.id;
   $('#trade-first').innerHTML = optionList({ selected: first });
   $('#trade-second').innerHTML = optionList({ selected: second });
   if ($('#trade-first').value === $('#trade-second').value && game.players[1]) $('#trade-second').value = game.players[1].id;
+}
+
+function renderCreditors() {
+  const debtor = $('#bankrupt-player').value;
+  const current = $('#bankrupt-creditor').value || 'bank';
+  const options = [{ id: 'bank', name: 'The Bank' }, ...activePlayers().filter((player) => player.id !== debtor)];
+  $('#bankrupt-creditor').innerHTML = options.map((item) => `<option value="${item.id}" ${item.id === current ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
 }
 
 function renderDeeds() {
@@ -270,7 +358,7 @@ function ownedDeedChecks(playerId, side) {
 }
 
 function transactionIcon(type) {
-  return ({ system:'M', transfer:'↔', rent:'R', purchase:'⌂', auction:'⌂', mortgage:'$', unmortgage:'$', building:'▰', trade:'⇄', tax:'$', parking:'P', jail:'#' })[type] || '$';
+  return ({ system:'M', transfer:'↔', rent:'R', purchase:'⌂', auction:'⌂', mortgage:'$', unmortgage:'$', building:'▰', trade:'⇄', tax:'$', parking:'P', jail:'#', undo:'↶', bankrupt:'✕', end:'★' })[type] || '$';
 }
 
 function timeAgo(iso) {
@@ -283,7 +371,7 @@ function timeAgo(iso) {
 
 function ledgerHtml(items) {
   if (!items.length) return '<div class="empty-state">No transactions yet.</div>';
-  return items.map((item) => `<article class="ledger-item"><span class="ledger-icon">${transactionIcon(item.type)}</span><span class="ledger-copy"><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.detail || item.type)}</small></span><span class="ledger-amount">${item.amount != null ? money.format(item.amount) : '—'}<time datetime="${item.at}">${timeAgo(item.at)}</time></span></article>`).join('');
+  return items.map((item) => `<article class="ledger-item ${item.undone ? 'undone' : ''}"><span class="ledger-icon">${transactionIcon(item.type)}</span><span class="ledger-copy"><strong>${escapeHtml(item.label)}</strong><small>${item.undone ? 'Undone · ' : ''}${escapeHtml(item.detail || item.type)}</small></span><span class="ledger-amount">${item.amount != null ? money.format(item.amount) : '—'}<time datetime="${item.at}">${timeAgo(item.at)}</time></span></article>`).join('');
 }
 
 function renderLedger() {
@@ -308,12 +396,65 @@ async function submitAction(action, successMessage) {
     game = await api(`/api/games/${game.id}/actions`, { method: 'POST', body: { ...action, expectedRevision: game.revision } });
     renderGame();
     toast(successMessage);
+    feedback.play('success');
     return true;
   } catch (error) {
     if (error.status === 409) await loadGame(true);
     toast(error.message, 'error');
+    feedback.play('error');
     return false;
   }
+}
+
+async function undoLast() {
+  if (!game.undo) return;
+  if (!confirm(`Undo “${game.undo.label}”?`)) return;
+  await submitAction({ type: 'undo' }, 'Last action undone.');
+}
+
+async function declareBankruptcy(event) {
+  event.preventDefault();
+  const debtor = playerById($('#bankrupt-player').value);
+  const creditorId = $('#bankrupt-creditor').value;
+  const creditorName = creditorId === 'bank' ? 'the Bank' : playerById(creditorId)?.name;
+  if (!debtor || !confirm(`Declare ${debtor.name} bankrupt to ${creditorName}? Their cash and deeds will be handed over. You can undo this.`)) return;
+  if (await submitAction({ type: 'bankrupt', playerId: debtor.id, creditorId }, `${debtor.name} is out of the game.`)) $('.bankruptcy').open = false;
+}
+
+async function endGame() {
+  if (!confirm('End the game now? The player with the highest net worth wins. You can undo this.')) return;
+  await submitAction({ type: 'end-game' }, 'Game over.');
+}
+
+function openResults() {
+  const rows = game.standings || [];
+  const rentBy = {};
+  game.transactions.filter((item) => item.type === 'rent' && !item.undone).forEach((item) => { rentBy[item.toId] = (rentBy[item.toId] || 0) + item.amount; });
+  const minutes = Math.max(1, Math.round((new Date(game.endedAt || Date.now()) - new Date(game.createdAt)) / 60000));
+  const table = rows.map((row) => `<tr class="${game.winnerIds.includes(row.playerId) ? 'winner-row' : ''}"><td>${row.bankrupt ? '—' : row.rank}</td><td>${escapeHtml(row.name)}${row.bankrupt ? ' <small>bankrupt</small>' : ''}</td><td>${money.format(row.cash)}</td><td>${money.format(row.property)}</td><td>${money.format(row.buildings)}</td><td><strong>${money.format(row.total)}</strong></td></tr>`).join('');
+  const rentLeader = Object.entries(rentBy).sort((a, b) => b[1] - a[1])[0];
+  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${minutes} minute${minutes === 1 ? '' : 's'} · ${game.transactions.length} transactions${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds at mortgage value) + buildings at cost.</p>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
+  $('[data-undo-results]', $('#results-content'))?.addEventListener('click', async () => {
+    if (await submitAction({ type: 'undo' }, 'Back in play.')) $('#results-dialog').close();
+  });
+  if (!$('#results-dialog').open) $('#results-dialog').showModal();
+}
+
+function showQr() {
+  const url = location.href;
+  try {
+    $('#qr-code').innerHTML = qrToSvg(encodeQr(url, { ecl: 'M' }), { label: `QR code for ${url}` });
+  } catch {
+    $('#qr-code').textContent = 'This link is too long for a QR code.';
+  }
+  $('#qr-url').textContent = url;
+  $('#qr-dialog').showModal();
+}
+
+function renderSoundToggle() {
+  const button = $('#sound-toggle');
+  button.setAttribute('aria-pressed', String(feedback.enabled));
+  button.innerHTML = `${feedback.enabled ? '🔊' : '🔇'} <span>${feedback.enabled ? 'Sound on' : 'Sound off'}</span>`;
 }
 
 async function pay(event) {
@@ -425,6 +566,22 @@ function bindEvents() {
   $('#trade-first').addEventListener('change', renderTrade);
   $('#trade-second').addEventListener('change', renderTrade);
   $('#share-game').addEventListener('click', shareGame);
+  $('#show-qr').addEventListener('click', showQr);
+  $('#qr-copy').addEventListener('click', shareGame);
+  $('#sound-toggle').addEventListener('click', () => {
+    feedback.set(!feedback.enabled);
+    renderSoundToggle();
+    feedback.play('success');
+  });
+  renderSoundToggle();
+  $('#end-game').addEventListener('click', endGame);
+  $('#view-results').addEventListener('click', openResults);
+  $$('[data-undo]').forEach((button) => button.addEventListener('click', undoLast));
+  $('#bankrupt-form').addEventListener('submit', declareBankruptcy);
+  $('#bankrupt-player').addEventListener('change', renderCreditors);
+  ['#qr-dialog', '#results-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
+    if (event.target === $(selector) || event.target.closest('[data-close-dialog]')) $(selector).close();
+  }));
   $('#deed-dialog').addEventListener('click', (event) => { if (event.target === $('#deed-dialog')) $('#deed-dialog').close(); });
   addEventListener('popstate', () => loadGame());
 }

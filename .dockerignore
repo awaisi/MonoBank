@@ -5,3 +5,5 @@ test
 node_modules
 *.md
 Dockerfile
+e2e
+docs
