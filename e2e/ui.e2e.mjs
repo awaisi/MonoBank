@@ -580,7 +580,15 @@ test('MonoBank UI flows', { skip: skipReason }, async (t) => {
     assert.equal(await viewer.$$eval('#full-ledger .ledger-item.undone, #full-ledger .is-undo', (rows) => rows.length), 0);
     assert.equal(await viewer.textContent('#ledger-undone'), 'Show 2 undone');
     assert.match(await viewer.textContent('#ledger-note'), /^Showing 50 of \d+\+ entries\.$/);
-    while (await viewer.isVisible('#ledger-more')) await viewer.click('#ledger-more');
+    // While older entries load, the button shows "Loading…" (disabled) and then hides once everything is in.
+    // Wait for it to settle before each click, or a click can target a button that is about to disappear.
+    const moreSettled = () => viewer.waitForFunction(() => { const button = document.querySelector('#ledger-more'); return button.hidden || !button.disabled; });
+    for (let clicks = 0; clicks < 20; clicks += 1) {
+      await moreSettled();
+      if (!(await viewer.isVisible('#ledger-more'))) break;
+      await viewer.click('#ledger-more');
+    }
+    await moreSettled();
     assert.equal(await viewer.$$eval('#full-ledger .ledger-item', (rows) => rows.length), total - 2, 'paging reaches the start, beyond what the server sends up front');
     assert.match(await viewer.textContent('#full-ledger .ledger-item:last-child'), /Bank opened/);
     // Type chips and search combine.
