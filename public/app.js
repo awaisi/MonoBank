@@ -24,6 +24,8 @@ let ledgerLimit = LEDGER_STEP;
 let ledgerType = 'all';
 let ledgerShowUndone = false;
 let ledgerMatches = 0;
+let ledgerSearchOpen = false;
+let summaryOpen = false;
 let stream = null;         // EventSource for live updates
 let streamLive = false;
 let acting = false;        // an action from this device is in flight
@@ -299,7 +301,9 @@ function resetLedger() {
   ledgerLimit = LEDGER_STEP;
   ledgerType = 'all';
   ledgerShowUndone = false;
+  ledgerSearchOpen = false;
   $('#ledger-search').value = '';
+  $('#ledger-type').value = 'all';
 }
 
 const apiBase = () => (isSpectator() ? `/api/watch/${spectatorToken}` : `/api/games/${game.id}`);
@@ -740,7 +744,11 @@ function renderLedger() {
   const filter = select.value;
   const query = $('#ledger-search').value.trim().toLowerCase();
   const types = LEDGER_TYPES[ledgerType];
-  $$('[data-ledger-type]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.ledgerType === ledgerType)));
+  $('#ledger-type').value = ledgerType;
+  // On phones the search box opens on demand (and stays open while it holds a search); wide screens always show it.
+  const searching = ledgerSearchOpen || Boolean(query);
+  $('.ledger-toolbar').classList.toggle('searching', searching);
+  $('#ledger-search-toggle').setAttribute('aria-expanded', String(searching));
   const matches = ledgerCache.filter((item) => (!types || types.includes(item.type)) && involves(item, filter) && matchesSearch(item, query));
   const items = ledgerShowUndone ? matches : matches.filter((item) => !item.undone && item.type !== 'undo');
   const hiddenUndone = matches.length - items.length;
@@ -818,9 +826,14 @@ function renderActivitySummary(filter) {
     ];
   }
   const note = stats.complete ? '' : '<p class="fine-print">Totals cover the moves still stored; the start of this very long game was trimmed.</p>';
-  const html = `<h3 class="summary-title">${title}</h3><dl class="summary-facts">${facts.map(([label, value, tone = '']) => `<div><dt>${label}</dt><dd class="${tone}">${value}</dd></div>`).join('')}</dl>${note}`;
-  $('#ledger-summary').innerHTML = html;
-  $('#side-summary').innerHTML = html;
+  const body = `<dl class="summary-facts">${facts.map(([label, value, tone = '']) => `<div><dt>${label}</dt><dd class="${tone}">${value}</dd></div>`).join('')}</dl>${note}`;
+  // The page copy collapses to one line (title + the key numbers); tap to see every total. The sidebar copy is always open.
+  const teaser = row
+    ? `Net ${signed(row.moneyIn - row.moneyOut)} · rent +${money.format(row.rentCollected)}`
+    : `${stats.moves} ${stats.moves === 1 ? 'move' : 'moves'} · ${money.format(stats.moneyMoved)} moved`;
+  $('#ledger-summary').innerHTML = `<details class="summary-details" ${summaryOpen ? 'open' : ''}><summary><span class="summary-title">${title}</span><span class="summary-teaser">${teaser}</span></summary>${body}</details>`;
+  $('#ledger-summary details').addEventListener('toggle', (event) => { summaryOpen = event.target.open; });
+  $('#side-summary').innerHTML = `<h3 class="summary-title">${title}</h3>${body}`;
 }
 
 function switchView(view, { scroll = true } = {}) {
@@ -1183,7 +1196,14 @@ function bindEvents() {
   const refilter = () => { ledgerLimit = LEDGER_STEP; renderLedger(); };
   $('#ledger-filter').addEventListener('change', refilter);
   $('#ledger-search').addEventListener('input', refilter);
-  $$('[data-ledger-type]').forEach((button) => button.addEventListener('click', () => { ledgerType = button.dataset.ledgerType; refilter(); }));
+  $('#ledger-type').addEventListener('change', () => { ledgerType = $('#ledger-type').value; refilter(); });
+  $('#ledger-search-toggle').addEventListener('click', () => {
+    const open = !(ledgerSearchOpen || $('#ledger-search').value);
+    ledgerSearchOpen = open;
+    if (!open) $('#ledger-search').value = '';
+    refilter();
+    if (open) $('#ledger-search').focus();
+  });
   $('#ledger-more').addEventListener('click', loadEarlier);
   $('#ledger-undone').addEventListener('click', () => { ledgerShowUndone = !ledgerShowUndone; renderLedger(); });
   $('#player-dialog').addEventListener('close', () => { sheet = null; });

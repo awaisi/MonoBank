@@ -183,17 +183,12 @@
             <div id="ledger-view" class="console-view" hidden>
               <div class="view-heading"><div><p class="kicker">BANK RECORD</p><h2>Activity</h2></div><button type="button" class="undo-button" data-undo hidden>↶ Undo</button></div>
               <div id="ledger-summary" class="activity-summary" aria-live="polite"></div>
-              <div class="ledger-controls">
-                <label class="ledger-filter"><span>Show</span><select id="ledger-filter" aria-label="Filter activity by player"><option value="all">Everyone</option></select></label>
-                <label class="ledger-search"><span class="sr-only">Search activity</span><input type="search" id="ledger-search" placeholder="Search deeds, players, notes" autocomplete="off"></label>
-              </div>
-              <div class="ledger-types" role="group" aria-label="Filter by type">
-                <button type="button" data-ledger-type="all" aria-pressed="true">All</button>
-                <button type="button" data-ledger-type="payments" aria-pressed="false">Payments</button>
-                <button type="button" data-ledger-type="rent" aria-pressed="false">Rent</button>
-                <button type="button" data-ledger-type="deeds" aria-pressed="false">Deeds</button>
-                <button type="button" data-ledger-type="building" aria-pressed="false">Building</button>
-                <button type="button" data-ledger-type="trades" aria-pressed="false">Trades</button>
+              <div class="ledger-toolbar">
+                <label class="ledger-pick"><span class="sr-only">Show activity for</span><select id="ledger-filter" aria-label="Show activity for"><option value="all">Everyone</option></select></label>
+                <label class="ledger-pick"><span class="sr-only">Type of activity</span><select id="ledger-type" aria-label="Type of activity"><option value="all">All types</option><option value="payments">Payments</option><option value="rent">Rent</option><option value="deeds">Deeds</option><option value="building">Building</option><option value="trades">Trades</option></select></label>
+                <button type="button" class="ledger-icon-button" id="ledger-search-toggle" aria-expanded="false" aria-controls="ledger-search-box" aria-label="Search activity"><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></button>
+                <button type="button" class="ledger-icon-button ledger-undo" data-undo hidden aria-label="Undo last action"><span aria-hidden="true">↶</span></button>
+                <label class="ledger-search" id="ledger-search-box"><span class="sr-only">Search activity</span><input type="search" id="ledger-search" placeholder="Search deeds, players, notes" autocomplete="off"></label>
               </div>
               <div id="full-ledger" class="ledger-list full"></div>
               <div class="ledger-footer">
