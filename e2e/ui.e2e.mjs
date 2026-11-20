@@ -163,6 +163,41 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.selectOption('#payment-from', { label: 'Ana' });
   });
 
+  await t.test('player sheet quick actions pay and charge the Bank in one tap', async () => {
+    const chip = (name) => `#players-bar [data-player]:has-text("${name}") b`;
+    const cyIs = (value) => page.waitForFunction((want) => [...document.querySelectorAll('#players-bar [data-player]')].find((item) => item.textContent.includes('Cy'))?.querySelector('b').textContent === want, value);
+    await page.click('#players-bar [data-player]:has-text("Cy")');
+    await page.waitForSelector('#player-dialog[open] .quick-row');
+    assert.deepEqual(await page.$$eval('#player-dialog [data-quick]', (buttons) => buttons.map((button) => button.textContent)),
+      ['Passed GO +$200', 'Income Tax −$200', 'Luxury Tax −$100', 'Jail fee −$50'], 'no "Landed on GO" without that house rule');
+    await page.click('#player-dialog [data-quick="go"]');
+    await toast('Cy +$200 · Passed GO');
+    await cyIs('$1,700');
+    assert.equal(await page.textContent('#player-dialog .dialog-facts strong'), '$1,700', 'the sheet stays open and refreshes');
+    await page.click('#player-dialog [data-quick="tax"]');
+    await toast('Cy −$200 · Income Tax');
+    await page.waitForFunction(() => /\$300$/.test(document.querySelector('#players-bar [data-parking] b').textContent));
+    assert.equal(await page.textContent(chip('Cy')), '$1,500', 'taxes go to the Free Parking pot');
+    await page.fill('#quick-amount', '75');
+    await page.click('#quick-custom [data-direction="out"]');
+    await toast('Cy −$75 · Paid the Bank');
+    await cyIs('$1,425');
+    assert.equal(await page.inputValue('#quick-amount'), '');
+    await page.fill('#quick-amount', '75');
+    await page.click('#quick-custom [data-direction="in"]');
+    await cyIs('$1,500');
+    await page.click('#quick-custom [data-direction="in"]');
+    await toast('Enter an amount of at least $1.');
+    await page.click('#player-dialog [data-close-dialog]');
+    for (let i = 0; i < 4; i += 1) {
+      const label = await page.textContent('.activity-panel .ledger-item:first-child strong');
+      await page.click('.activity-panel [data-undo]');
+      await page.waitForFunction((old) => document.querySelector('.activity-panel .ledger-item:first-child strong')?.textContent !== old, label);
+    }
+    await page.waitForFunction(() => /\$100$/.test(document.querySelector('#players-bar [data-parking] b').textContent));
+    assert.deepEqual(await balances(), ['$1,100', '$1,500', '$1,500', '$100']);
+  });
+
   await t.test('"this phone is me" personalises the view and is remembered', async () => {
     await page.click('#menu-button');
     await page.click('#switch-player');
@@ -236,7 +271,9 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.deepEqual(options, ['Everyone', 'Ana (you)', 'Ben', 'Cy', 'The Bank']);
     const everyone = await page.$$eval('#full-ledger .ledger-item', (items) => items.length);
     await page.selectOption('#ledger-filter', { label: 'Cy' });
-    assert.match(await page.textContent('#full-ledger'), /No activity for Cy yet/);
+    const cyLabels = await page.$$eval('#full-ledger .ledger-item strong', (items) => items.map((item) => item.textContent));
+    assert.ok(cyLabels.length > 0 && cyLabels.length < everyone && cyLabels.every((label) => label.includes('Cy')), cyLabels.join(' | '));
+    assert.match(await page.textContent('#full-ledger'), /Passed GO/, 'quick actions show up as ordinary transfers');
     await page.selectOption('#ledger-filter', { label: 'Ana (you)' });
     const anaLabels = await page.$$eval('#full-ledger .ledger-item strong', (items) => items.map((item) => item.textContent));
     assert.ok(anaLabels.length > 0 && anaLabels.length < everyone);
