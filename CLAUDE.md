@@ -23,7 +23,7 @@ Run `npm run check && npm test` before every commit. If `lib/game.mjs` or `publi
 | `lib/game.mjs` | All game rules. `createGame`, `performAction`, `calculateRent`, `publicGame`, `GameStore` (in-memory, 24 h TTL). |
 | `lib/properties.mjs` | Deed data (28 classic U.S. deeds) and color groups. |
 | `public/` | Vanilla JS single-page client (`app.js`), `index.html`, `styles.css`, PWA manifest. No build step. |
-| `test/game.test.mjs` | Rules and API tests. |
+| `test/game.test.mjs` | Rules (including every house rule) and API tests. |
 | `Dockerfile` | Production image (Node 22 Alpine, runs as `node`). |
 | `infra/` | Bicep (Azure Container Apps), bootstrap and Cloudflare DNS scripts. |
 | `.github/workflows/` | `azure-deploy.yml` (every push to `main`), `azure-bootstrap.yml` (one-time, manual). |
@@ -35,14 +35,15 @@ Run `npm run check && npm test` before every commit. If `lib/game.mjs` or `publi
 - **Money is whole dollars.** Use the `money()` helper for any amount from input. Balances may go negative (the table settles debts); do not block payments for insufficient funds unless a rule requires it.
 - **Optimistic concurrency.** Clients send `expectedRevision`; a mismatch returns HTTP 409 and the client reloads. Keep this for every action.
 - **Accounts** are player IDs plus the special IDs `bank` and `parking` (Free Parking pot, only when that house rule is on).
-- **House rules** live in `game.rules`, are normalized by `normalizeRules()` at creation, and are fixed for the life of a game. Add a new rule by: default in `DEFAULT_RULES`, validation in `normalizeRules()`, enforcement in `performAction`/`calculateRent`, a setup control in `index.html` + `app.js`, the rules summary in `rulesSummary()`, tests, and the README "House rules" table.
+- **House rules** live in `game.rules` (defaults in `DEFAULT_RULES`: Free Parking jackpot + seed, $400 on GO, no rent in jail, auctions, even building, mortgage interest %), are normalized by `normalizeRules()` at creation, and are fixed for the life of a game. The pot balance is `game.freeParking`; jail status is `player.inJail`. The client's `rulesSummary()` in `public/app.js` mirrors the server's for display only. Add a new rule by: default in `DEFAULT_RULES`, validation in `normalizeRules()`, enforcement in `performAction`/`calculateRent`, a setup control in `index.html` + `app.js`, the rules summary in `rulesSummary()`, tests, and the README "House rules" table.
 - **State is in memory only.** Restarts and redeploys wipe games. The app must run as exactly one instance; do not add scaling or multiple replicas without first adding a shared store.
 
 ### Client conventions
 
 - Escape every player-provided string with `escapeHtml()` before putting it in `innerHTML`.
-- No inline scripts or styles that violate the CSP in `server.mjs` (`script-src 'self'`, `style-src 'self'`). Inline `style="--var:…"` attributes on elements are already used for colors; keep new styling in `styles.css`.
+- The CSP in `server.mjs` (`script-src 'self'`, `style-src 'self'`) blocks inline scripts **and `style="…"` attributes in HTML strings**. For per-element values (player/deed colors), put `data-vars="--name=value;--other=value"` in the markup and call `applyStyleVars(container)` after setting `innerHTML`; it applies them through the CSSOM. Keep all other styling in `styles.css`. Check the browser console for CSP errors after UI changes.
 - Keep the 320 px mobile layout, keyboard focus, labels, and `aria-live` toasts working. Respect `prefers-reduced-motion`.
+- Verify UI changes in a real browser (Playwright is available in cloud sessions): create a game, exercise the changed flow, and confirm no console errors and no horizontal scroll at 375 px.
 - `styles.css` is compact (one block per line); append new rules in the same style.
 
 ## Deployment
