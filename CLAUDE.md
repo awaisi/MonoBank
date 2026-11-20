@@ -51,7 +51,9 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 - The CSP in `server.mjs` (`script-src 'self'`, `style-src 'self'`) blocks inline scripts **and `style="…"` attributes in HTML strings**. For per-element values (player/deed colors), put `data-vars="--name=value;--other=value"` in the markup and call `applyStyleVars(container)` after setting `innerHTML`; it applies them through the CSSOM. Keep all other styling in `styles.css`. Check the browser console for CSP errors after UI changes.
 - Keep the 320 px mobile layout, keyboard focus, labels, and `aria-live` toasts working. Respect `prefers-reduced-motion`.
 - Verify UI changes in a real browser (Playwright is available in cloud sessions): create a game, exercise the changed flow, and confirm no console errors and no horizontal scroll at 375 px.
-- `styles.css` is compact (one block per line); append new rules in the same style.
+- `styles.css` is compact (one block per line); append new rules in the same style, and delete rules that a change makes unused.
+- **Layout:** the sticky `.topbar` is the only header on every page. `#home-actions` (Start a game) shows on the setup screen; `#game-actions` (live badge with `#session-code`, Share, QR code, Sound, End game) shows on a game. `showSetup()`/`showGame()` toggle them. Put new game-wide actions in `.topbar-actions` as `.topbar-action` buttons with an icon span and an `.action-label` span (labels hide at ≤760 px, so every button also needs `aria-label` or `title`).
+- **Destructive actions** (like bankruptcy) live in a collapsed danger-zone card, show a plain-language preview of the outcome, name the affected player on the confirm button, and remind the user that Undo can reverse them.
 
 ## Deployment
 

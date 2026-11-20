@@ -28,6 +28,14 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   const toast = (text) => page.waitForSelector(`.toast:has-text("${text}")`);
   const balances = () => page.$$eval('#player-cards .player-card .balance', (cards) => cards.map((card) => card.textContent));
 
+  await t.test('home header offers "Start a game" and hides game actions', async () => {
+    await page.goto(base);
+    assert.equal(await page.isVisible('#home-actions'), true);
+    assert.equal(await page.isVisible('#game-actions'), false);
+    await page.click('#start-cta');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'player-0');
+  });
+
   await t.test('creates a game with house rules', async () => {
     await page.goto(base);
     await page.click('#add-player');
@@ -42,6 +50,14 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.waitForSelector('#game-screen:not([hidden])');
     assert.match(await page.textContent('#rules-line'), /Free Parking jackpot \(seeded \$100\)/);
     assert.deepEqual(await balances(), ['$1,500', '$1,500', '$1,500', '$100']);
+  });
+
+  await t.test('game header shows the live badge, game code and actions', async () => {
+    assert.equal(await page.isVisible('#home-actions'), false);
+    assert.equal(await page.isVisible('#game-actions'), true);
+    const code = page.url().split('/').pop().slice(0, 4).toUpperCase();
+    assert.equal(await page.textContent('#session-code'), code);
+    for (const id of ['#share-game', '#show-qr', '#sound-toggle', '#end-game']) assert.equal(await page.isVisible(id), true, id);
   });
 
   await t.test('player colors render through the CSP-safe path', async () => {
@@ -73,7 +89,13 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.click('[data-view=pay]');
     await page.click('.bankruptcy summary');
     await page.selectOption('#bankrupt-player', { label: 'Ana' });
+    assert.match(await page.textContent('#bankrupt-steps'), /1 deed return to the Bank/);
     await page.selectOption('#bankrupt-creditor', { label: 'Cy' });
+    const steps = await page.$$eval('#bankrupt-steps li', (items) => items.map((item) => item.textContent));
+    assert.deepEqual(steps, ['$1,100 cash and 1 deed go to Cy.', 'Ana leaves the game.']);
+    assert.equal(await page.textContent('#bankrupt-submit-label'), 'Declare Ana bankrupt');
+    const stepLayout = await page.$eval('#bankrupt-steps li', (item) => item.children.length);
+    assert.equal(stepLayout, 1, 'each step is one text block beside its number');
     await page.click('#bankrupt-form button[type=submit]');
     await toast('Ana is out of the game.');
     assert.equal(await page.isVisible('.player-card.bankrupt'), true);

@@ -16,9 +16,21 @@
     <header class="topbar">
       <a class="brand" href="/" aria-label="MonoBank home">
         <span class="brand-mark" aria-hidden="true">M</span>
-        <span><strong>MONOBANK</strong><small>TABLESIDE BANKER</small></span>
+        <span class="brand-text"><strong>MONOBANK</strong><small>TABLESIDE BANKER</small></span>
       </a>
-      <div class="session-badge" id="session-badge" hidden><span class="live-dot"></span><span>GAME LIVE</span></div>
+      <div class="topbar-home" id="home-actions">
+        <span class="topbar-note">Unofficial fan-made companion</span>
+        <button type="button" class="topbar-cta" id="start-cta">Start a game <span aria-hidden="true">→</span></button>
+      </div>
+      <div class="topbar-game" id="game-actions" hidden>
+        <div class="session-badge" id="session-badge"><span class="live-dot"></span><span>LIVE</span><span class="session-code" id="session-code"></span></div>
+        <nav class="topbar-actions" aria-label="Game actions">
+          <button class="topbar-action" id="share-game" type="button" title="Copy the game link"><span aria-hidden="true">↗</span><span class="action-label">Share</span></button>
+          <button class="topbar-action" id="show-qr" type="button" title="Show a QR code to join" aria-label="QR code to join"><span aria-hidden="true">▦</span><span class="action-label">QR code</span></button>
+          <button class="topbar-action" id="sound-toggle" type="button" aria-pressed="true" aria-label="Payment sounds and vibration"><span aria-hidden="true">🔊</span><span class="action-label">Sound</span></button>
+          <button class="topbar-action accent" id="end-game" type="button" title="End the game and see results"><span aria-hidden="true">★</span><span class="action-label">End game</span></button>
+        </nav>
+      </div>
     </header>
 
     <main id="main" tabindex="-1">
@@ -68,12 +80,6 @@
       <section id="game-screen" class="game-layout" hidden>
         <div class="game-head">
           <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1><p class="rules-line" id="rules-line"></p></div>
-          <div class="head-actions">
-            <button class="share-button" id="share-game" type="button">↗ <span>Share game</span></button>
-            <button class="share-button" id="show-qr" type="button" aria-label="Show a QR code to join this game">▦ <span>QR code</span></button>
-            <button class="share-button" id="sound-toggle" type="button" aria-pressed="true" aria-label="Payment sounds and vibration">🔊 <span>Sound</span></button>
-            <button class="share-button" id="end-game" type="button">★ <span>End game</span></button>
-          </div>
         </div>
         <div class="ended-banner" id="ended-banner" role="status" hidden><strong id="ended-text"></strong><button type="button" id="view-results">View results</button></div>
 
@@ -110,15 +116,24 @@
                 <label class="field"><span>Note <small>optional</small></span><input id="payment-note" maxlength="120" placeholder="Rent, card, side deal…"></label>
                 <button class="primary-button full" type="submit"><span>TRANSFER FUNDS</span><span aria-hidden="true">→</span></button>
               </form>
-              <details class="bankruptcy">
-                <summary>Declare bankruptcy</summary>
-                <form id="bankrupt-form" class="action-form">
-                  <p class="muted">For a player who can’t pay what they owe. Their buildings are sold to the Bank at half price; their cash and deeds go to the creditor, or back to the Bank. They leave the game, and the last player standing wins.</p>
-                  <div class="account-row two-up">
-                    <label class="field"><span>Player</span><select id="bankrupt-player" required></select></label>
+              <details class="bankruptcy" id="bankruptcy">
+                <summary>
+                  <span class="danger-icon" aria-hidden="true">!</span>
+                  <span class="danger-copy"><strong>Bankruptcy</strong><small>When a player can’t pay what they owe</small></span>
+                  <span class="danger-chevron" aria-hidden="true"></span>
+                </summary>
+                <form id="bankrupt-form" class="bankrupt-body">
+                  <div class="bankrupt-fields">
+                    <label class="field"><span>Bankrupt player</span><select id="bankrupt-player" required></select></label>
+                    <span class="bankrupt-arrow" aria-hidden="true">→</span>
                     <label class="field"><span>Owes</span><select id="bankrupt-creditor" required></select></label>
                   </div>
-                  <button class="danger-button full" type="submit">DECLARE BANKRUPTCY</button>
+                  <div class="bankrupt-preview">
+                    <p class="kicker">WHAT HAPPENS</p>
+                    <ol id="bankrupt-steps" class="bankrupt-steps" aria-live="polite"></ol>
+                  </div>
+                  <button class="danger-button full" type="submit"><span id="bankrupt-submit-label">Declare bankruptcy</span><span aria-hidden="true">→</span></button>
+                  <p class="bankrupt-note">You can reverse this with Undo in Activity.</p>
                 </form>
               </details>
             </div>

@@ -197,7 +197,8 @@ function showSetup() {
   game = null;
   $('#setup-screen').hidden = false;
   $('#game-screen').hidden = true;
-  $('#session-badge').hidden = true;
+  $('#game-actions').hidden = true;
+  $('#home-actions').hidden = false;
   $('#mobile-nav').hidden = true;
   clearInterval(pollTimer);
 }
@@ -205,7 +206,10 @@ function showSetup() {
 function showGame() {
   $('#setup-screen').hidden = true;
   $('#game-screen').hidden = false;
-  $('#session-badge').hidden = false;
+  $('#game-actions').hidden = false;
+  $('#home-actions').hidden = true;
+  $('#session-code').textContent = game.id.slice(0, 4).toUpperCase();
+  $('#session-badge').title = `Game ${game.id}`;
   $('#mobile-nav').hidden = false;
   renderGame();
   clearInterval(pollTimer);
@@ -320,6 +324,34 @@ function renderCreditors() {
   const current = $('#bankrupt-creditor').value || 'bank';
   const options = [{ id: 'bank', name: 'The Bank' }, ...activePlayers().filter((player) => player.id !== debtor)];
   $('#bankrupt-creditor').innerHTML = options.map((item) => `<option value="${item.id}" ${item.id === current ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
+  renderBankruptcyPreview();
+}
+
+// Mirrors the server's bankruptcy settlement for the preview only.
+function renderBankruptcyPreview() {
+  const debtor = playerById($('#bankrupt-player').value);
+  if (!debtor) return;
+  const creditorId = $('#bankrupt-creditor').value || 'bank';
+  const creditorName = creditorId === 'bank' ? 'the Bank' : playerById(creditorId)?.name || 'the creditor';
+  const owned = game.properties.filter((property) => game.deeds[property.id].ownerId === debtor.id);
+  const proceeds = owned.reduce((sum, property) => sum + (property.kind === 'street' ? game.deeds[property.id].buildings * Math.floor(property.houseCost / 2) : 0), 0);
+  const cash = Math.max(debtor.balance + proceeds, 0);
+  const debt = Math.min(debtor.balance + proceeds, 0);
+  const mortgaged = owned.filter((property) => game.deeds[property.id].mortgaged).length;
+  const deedText = `${owned.length} deed${owned.length === 1 ? '' : 's'}`;
+  const steps = [];
+  if (proceeds) steps.push(`Houses and hotels are sold to the Bank for <b>${money.format(proceeds)}</b>.`);
+  if (creditorId === 'bank') {
+    steps.push(owned.length ? `${deedText} return to the Bank${mortgaged ? ', unmortgaged' : ''}.` : 'No deeds to return.');
+    steps.push(cash ? `<b>${money.format(cash)}</b> cash goes back to the Bank.` : 'No cash to hand over.');
+  } else {
+    steps.push(`<b>${money.format(cash)}</b> cash and ${deedText}${mortgaged ? ` (${mortgaged} mortgaged)` : ''} go to <b>${escapeHtml(creditorName)}</b>.`);
+  }
+  if (debt) steps.push(`The remaining <b>${money.format(-debt)}</b> debt is written off.`);
+  const remaining = activePlayers().filter((player) => player.id !== debtor.id);
+  steps.push(remaining.length === 1 ? `${escapeHtml(debtor.name)} leaves the game, and <b>${escapeHtml(remaining[0].name)} wins</b>.` : `${escapeHtml(debtor.name)} leaves the game.`);
+  $('#bankrupt-steps').innerHTML = steps.map((step) => `<li><span>${step}</span></li>`).join('');
+  $('#bankrupt-submit-label').textContent = `Declare ${debtor.name} bankrupt`;
 }
 
 function renderDeeds() {
@@ -418,7 +450,7 @@ async function declareBankruptcy(event) {
   const creditorId = $('#bankrupt-creditor').value;
   const creditorName = creditorId === 'bank' ? 'the Bank' : playerById(creditorId)?.name;
   if (!debtor || !confirm(`Declare ${debtor.name} bankrupt to ${creditorName}? Their cash and deeds will be handed over. You can undo this.`)) return;
-  if (await submitAction({ type: 'bankrupt', playerId: debtor.id, creditorId }, `${debtor.name} is out of the game.`)) $('.bankruptcy').open = false;
+  if (await submitAction({ type: 'bankrupt', playerId: debtor.id, creditorId }, `${debtor.name} is out of the game.`)) $('#bankruptcy').open = false;
 }
 
 async function endGame() {
@@ -454,7 +486,8 @@ function showQr() {
 function renderSoundToggle() {
   const button = $('#sound-toggle');
   button.setAttribute('aria-pressed', String(feedback.enabled));
-  button.innerHTML = `${feedback.enabled ? '🔊' : '🔇'} <span>${feedback.enabled ? 'Sound on' : 'Sound off'}</span>`;
+  button.title = feedback.enabled ? 'Sound and vibration are on' : 'Sound and vibration are off';
+  button.innerHTML = `<span aria-hidden="true">${feedback.enabled ? '🔊' : '🔇'}</span><span class="action-label">${feedback.enabled ? 'Sound' : 'Muted'}</span>`;
 }
 
 async function pay(event) {
@@ -575,6 +608,11 @@ function bindEvents() {
   });
   renderSoundToggle();
   $('#end-game').addEventListener('click', endGame);
+  $('#bankrupt-creditor').addEventListener('change', renderBankruptcyPreview);
+  $('#start-cta').addEventListener('click', () => {
+    $('.setup-card').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    $('#player-0')?.focus({ preventScroll: true });
+  });
   $('#view-results').addEventListener('click', openResults);
   $$('[data-undo]').forEach((button) => button.addEventListener('click', undoLast));
   $('#bankrupt-form').addEventListener('submit', declareBankruptcy);
