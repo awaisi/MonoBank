@@ -9,6 +9,11 @@ let game = null;
 let activeView = 'pay';
 let pollTimer;
 let shownResultsFor = null;
+let spectatorToken = null; // set on /watch/<token> pages
+let stream = null;         // EventSource for live updates
+let streamLive = false;
+let acting = false;        // an action from this device is in flight
+let me = null;             // this device's player ID, 'banker', or null (not chosen)
 
 // Payment feedback: a short chime and, where supported, a vibration.
 // Preference is per device (localStorage, best effort).
@@ -60,8 +65,20 @@ function applyStyleVars(root = document) {
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[character]);
 const gameIdFromPath = () => location.pathname.match(/^\/game\/([a-f0-9]{16})\/?$/)?.[1];
+const watchTokenFromPath = () => location.pathname.match(/^\/watch\/([a-f0-9]{16})\/?$/)?.[1];
+const isSpectator = () => Boolean(spectatorToken);
 const playerById = (id) => game?.players.find((player) => player.id === id);
 const activePlayers = () => game.players.filter((player) => !player.bankrupt);
+// "This phone is me": a per-device choice, remembered per game (best effort).
+const identityKey = () => `monobank:me:${game.id}`;
+const mePlayer = () => (me && me !== 'banker' ? playerById(me) : null);
+function loadIdentity() {
+  try { return localStorage.getItem(identityKey()); } catch { return null; }
+}
+function saveIdentity(value) {
+  me = value;
+  try { localStorage.setItem(identityKey(), value); } catch { /* storage unavailable */ }
+}
 const standingFor = (id) => game.standings?.find((row) => row.playerId === id);
 const propertyById = (id) => game?.properties.find((property) => property.id === id);
 const deedOwner = (propertyId) => playerById(game?.deeds[propertyId]?.ownerId);
@@ -175,15 +192,11 @@ async function createGame(event) {
 
 async function loadGame(silent = false) {
   const id = gameIdFromPath();
-  if (!id) return showSetup();
+  const token = watchTokenFromPath();
+  if (!id && !token) return showSetup();
+  spectatorToken = token || null;
   try {
-    const latest = await api(`/api/games/${id}`);
-    if (!game || latest.revision !== game.revision) {
-      const remoteChange = game && latest.revision > game.revision;
-      game = latest;
-      showGame();
-      if (remoteChange) feedback.play('remote');
-    }
+    applyLatest(await api(token ? `/api/watch/${token}` : `/api/games/${id}`));
   } catch (error) {
     if (!silent) {
       showSetup();
@@ -193,8 +206,57 @@ async function loadGame(silent = false) {
   }
 }
 
+// Apply a newer game state from polling or the live stream.
+function applyLatest(latest) {
+  const sameGame = game && (isSpectator() ? game.viewToken === latest.viewToken : game.id === latest.id);
+  if (!sameGame) {
+    game = latest;
+    return showGame();
+  }
+  if (latest.revision <= game.revision) return;
+  game = latest;
+  renderGame();
+  if (!acting) feedback.play('remote');
+}
+
+function connectStream() {
+  closeStream();
+  if (!('EventSource' in window)) return;
+  stream = new EventSource(isSpectator() ? `/api/watch/${spectatorToken}/events` : `/api/games/${game.id}/events`);
+  stream.addEventListener('game', (event) => {
+    try { applyLatest(JSON.parse(event.data)); } catch { /* ignore malformed events */ }
+  });
+  stream.addEventListener('open', () => setLive(true));
+  stream.addEventListener('error', () => setLive(false));
+}
+
+function closeStream() {
+  stream?.close();
+  stream = null;
+  setLive(false);
+}
+
+function setLive(live) {
+  streamLive = live;
+  const badge = $('#session-badge');
+  badge.classList.toggle('polling', !live);
+  badge.title = live ? 'Live: updates appear instantly' : 'Reconnecting: checking for updates every few seconds';
+  schedulePoll();
+}
+
+// Polling is the fallback; while the live stream is connected it is only a slow safety net.
+function schedulePoll() {
+  clearInterval(pollTimer);
+  if (!game) return;
+  pollTimer = setInterval(() => { if (!document.hidden) loadGame(true); }, streamLive ? 30_000 : 3500);
+}
+
 function showSetup() {
   game = null;
+  spectatorToken = null;
+  me = null;
+  closeStream();
+  document.body.classList.remove('spectator');
   $('#setup-screen').hidden = false;
   $('#game-screen').hidden = true;
   $('#game-actions').hidden = true;
@@ -210,18 +272,27 @@ function showGame() {
   $('#game-screen').hidden = false;
   $('#game-actions').hidden = false;
   document.body.classList.add('in-game');
-  document.title = `Game ${game.id.slice(0, 4).toUpperCase()} · MonoBank`;
-  $('#session-code').textContent = game.id.slice(0, 4).toUpperCase();
-  $('#session-badge').title = `Live game ${game.id}`;
+  document.body.classList.toggle('spectator', isSpectator());
+  const code = isSpectator() ? 'VIEW' : game.id.slice(0, 4).toUpperCase();
+  document.title = isSpectator() ? 'Watching a game · MonoBank' : `Game ${code} · MonoBank`;
+  $('#session-code').textContent = code;
+  $('#spectator-note').hidden = !isSpectator();
   $('#mobile-nav').hidden = false;
+  if (isSpectator()) {
+    me = null;
+    if (['pay', 'trade'].includes(activeView)) activeView = 'ledger';
+  } else {
+    me = loadIdentity();
+  }
   renderGame();
-  clearInterval(pollTimer);
-  pollTimer = setInterval(() => { if (!document.hidden) loadGame(true); }, 3500);
+  connectStream();
+  if (!isSpectator() && !me) openIdentity();
 }
 
 function renderGame() {
   renderRules();
   renderStatus();
+  renderMe();
   renderPlayers();
   renderSelects();
   renderDeeds();
@@ -250,6 +321,49 @@ function renderStatus() {
   if (ended) $('#ended-text').textContent = `Game over: ${winnerText()}`;
 }
 
+function renderMe() {
+  const player = mePlayer();
+  $('#me-bar').hidden = isSpectator() || !me;
+  if (me && me !== 'banker' && !player) {
+    $('#me-text').innerHTML = 'You were a player who is no longer in the game.';
+  } else if (player?.bankrupt) {
+    $('#me-text').innerHTML = `Playing as <strong>${escapeHtml(player.name)}</strong> · bankrupt`;
+  } else if (player) {
+    const worth = standingFor(player.id)?.total ?? player.balance;
+    $('#me-text').innerHTML = `Playing as <strong>${escapeHtml(player.name)}</strong> · ${money.format(player.balance)} · net worth ${money.format(worth)}`;
+  } else {
+    $('#me-text').innerHTML = '<strong>Banker view</strong> · every player';
+  }
+  const mine = $('#deed-filter option[value="mine"]');
+  mine.hidden = !player;
+  mine.disabled = !player;
+  if (!player && $('#deed-filter').value === 'mine') $('#deed-filter').value = 'all';
+}
+
+function openIdentity() {
+  const options = activePlayers().map((player) => {
+    const index = game.players.indexOf(player);
+    return `<button type="button" class="identity-option ${player.id === me ? 'current' : ''}" data-identity="${player.id}" data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token">${TOKEN_LABELS[index]}</span><span><strong>${escapeHtml(player.name)}</strong><small>${money.format(player.balance)}</small></span></button>`;
+  });
+  options.push(`<button type="button" class="identity-option banker ${me === 'banker' ? 'current' : ''}" data-identity="banker"><span class="mini-token">$</span><span><strong>I’m the banker</strong><small>Not playing · see everyone equally</small></span></button>`);
+  $('#identity-options').innerHTML = options.join('');
+  applyStyleVars($('#identity-options'));
+  $$('[data-identity]', $('#identity-options')).forEach((button) => button.addEventListener('click', () => chooseIdentity(button.dataset.identity)));
+  if (!$('#identity-dialog').open) $('#identity-dialog').showModal();
+}
+
+function chooseIdentity(value) {
+  saveIdentity(value);
+  $('#identity-dialog').close();
+  const player = mePlayer();
+  if (player) {
+    $('#payment-from').value = player.id;
+    $('#trade-first').value = player.id;
+  }
+  renderGame();
+  toast(player ? `This phone is ${player.name}.` : 'This phone is the banker.');
+}
+
 function renderUndo() {
   $$('[data-undo]').forEach((button) => {
     button.hidden = !game.undo;
@@ -276,7 +390,8 @@ function renderPlayers() {
       return `<article class="player-card bankrupt" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">Bankrupt</div><div class="player-meta">${meta}</div></article>`;
     }
     const jailButton = jailRule && game.status !== 'ended' ? `<button type="button" class="jail-toggle" data-jail-player="${player.id}" aria-pressed="${player.inJail ? 'true' : 'false'}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : '';
-    return `<article class="player-card ${player.inJail && jailRule ? 'in-jail' : ''} ${winner ? 'winner' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${meta}</div><div class="player-status">${status}</div>${jailButton}</article>`;
+    const isMe = player.id === mePlayer()?.id;
+    return `<article class="player-card ${player.inJail && jailRule ? 'in-jail' : ''} ${winner ? 'winner' : ''} ${isMe ? 'is-me' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong>${isMe ? '<span class="you-badge">You</span>' : ''}</div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${meta}</div><div class="player-status">${status}</div>${jailButton}</article>`;
   });
   if (rules().freeParkingJackpot) {
     cards.push(`<article class="player-card parking-card" data-vars="--player-color=#d6b661"><div class="player-card-head"><span class="mini-token">P</span><strong>Free Parking</strong></div><div class="balance">${money.format(game.freeParking || 0)}</div><form class="parking-form" id="parking-form"><label class="sr-only" for="parking-winner">Who landed on Free Parking?</label><select id="parking-winner">${optionList()}</select><button type="submit" ${game.freeParking ? '' : 'disabled'}>Collect</button></form></article>`);
@@ -304,7 +419,7 @@ function optionList({ includeBank = false, includeParking = false, selected = ''
 }
 
 function renderSelects() {
-  const from = $('#payment-from').value || game.players[0]?.id;
+  const from = $('#payment-from').value || mePlayer()?.id || game.players[0]?.id;
   const to = $('#payment-to').value || game.players[1]?.id;
   $('#payment-from').innerHTML = optionList({ includeBank: true, selected: from });
   $('#payment-to').innerHTML = optionList({ includeBank: true, includeParking: true, selected: to });
@@ -315,7 +430,7 @@ function renderSelects() {
   $('#bankrupt-player').innerHTML = optionList({ selected: debtor });
   renderCreditors();
 
-  const first = $('#trade-first').value || game.players[0]?.id;
+  const first = $('#trade-first').value || mePlayer()?.id || game.players[0]?.id;
   const second = $('#trade-second').value || game.players[1]?.id;
   $('#trade-first').innerHTML = optionList({ selected: first });
   $('#trade-second').innerHTML = optionList({ selected: second });
@@ -363,7 +478,7 @@ function renderDeeds() {
   const filtered = game.properties.filter((property) => {
     const deed = game.deeds[property.id];
     const matchesQuery = property.name.toLowerCase().includes(query);
-    const matchesFilter = filter === 'all' || (filter === 'available' && !deed.ownerId) || (filter === 'owned' && deed.ownerId) || (filter === 'mortgaged' && deed.mortgaged);
+    const matchesFilter = filter === 'all' || (filter === 'available' && !deed.ownerId) || (filter === 'owned' && deed.ownerId) || (filter === 'mortgaged' && deed.mortgaged) || (filter === 'mine' && deed.ownerId && deed.ownerId === mePlayer()?.id);
     return matchesQuery && matchesFilter;
   });
   $('#deed-grid').innerHTML = filtered.map((property) => {
@@ -415,6 +530,7 @@ function renderLedger() {
 }
 
 function switchView(view) {
+  if (isSpectator() && ['pay', 'trade'].includes(view)) view = 'ledger';
   activeView = view;
   $$('.console-view').forEach((panel) => panel.hidden = panel.id !== `${view}-view`);
   $$('.view-tabs button').forEach((button) => {
@@ -427,6 +543,8 @@ function switchView(view) {
 }
 
 async function submitAction(action, successMessage) {
+  if (isSpectator()) return false;
+  acting = true;
   try {
     game = await api(`/api/games/${game.id}/actions`, { method: 'POST', body: { ...action, expectedRevision: game.revision } });
     renderGame();
@@ -438,6 +556,8 @@ async function submitAction(action, successMessage) {
     toast(error.message, 'error');
     feedback.play('error');
     return false;
+  } finally {
+    acting = false;
   }
 }
 
@@ -475,15 +595,33 @@ function openResults() {
   if (!$('#results-dialog').open) $('#results-dialog').showModal();
 }
 
-function showQr() {
-  const url = location.href;
+const playerLink = () => `${location.origin}/game/${game.id}`;
+const spectatorLink = () => `${location.origin}/watch/${isSpectator() ? spectatorToken : game.viewToken}`;
+
+function showQr(mode = isSpectator() ? 'watch' : $('input[name="qr-mode"]:checked').value) {
+  const watch = mode === 'watch';
+  const url = watch ? spectatorLink() : playerLink();
+  $('#qr-modes').hidden = isSpectator();
+  $(`input[name="qr-mode"][value="${watch ? 'watch' : 'play'}"]`).checked = true;
   try {
     $('#qr-code').innerHTML = qrToSvg(encodeQr(url, { ecl: 'M' }), { label: `QR code for ${url}` });
   } catch {
     $('#qr-code').textContent = 'This link is too long for a QR code.';
   }
+  $('#qr-help').textContent = watch
+    ? 'Spectators see balances, deeds and activity live, but can’t change anything.'
+    : 'Anyone with this link can make payments and manage deeds for every player.';
   $('#qr-url').textContent = url;
-  $('#qr-dialog').showModal();
+  if (!$('#qr-dialog').open) $('#qr-dialog').showModal();
+}
+
+async function copyText(text, message) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message);
+  } catch {
+    prompt('Copy this link:', text);
+  }
 }
 
 function renderSoundToggle() {
@@ -560,15 +698,16 @@ function openDeed(propertyId) {
     const priceField = auctions
       ? `<label class="field"><span>Price / winning bid</span><input id="deed-price" type="number" min="1" step="1" value="${property.price}" required></label><label><input id="deed-auction" type="checkbox"> Bought at auction</label>`
       : `<label class="field"><span>List price <small>auctions are off</small></span><input id="deed-price" type="number" value="${property.price}" readonly></label>`;
-    controls = `<form class="dialog-form" id="buy-deed-form"><label class="field"><span>Buyer</span><select id="deed-buyer">${optionList()}</select></label>${priceField}<button type="submit">ACQUIRE DEED</button></form>`;
+    controls = `<form class="dialog-form" id="buy-deed-form"><label class="field"><span>Buyer</span><select id="deed-buyer">${optionList({ selected: mePlayer()?.id })}</select></label>${priceField}<button type="submit">ACQUIRE DEED</button></form>`;
   } else {
-    const payers = game.players.filter((player) => player.id !== owner.id).map((player) => `<option value="${player.id}">${escapeHtml(player.name)}</option>`).join('');
+    const payers = activePlayers().filter((player) => player.id !== owner.id).map((player) => `<option value="${player.id}" ${player.id === mePlayer()?.id ? 'selected' : ''}>${escapeHtml(player.name)}</option>`).join('');
     const jailed = rules().noRentInJail && owner.inJail;
     const rentControl = deed.mortgaged ? '' : jailed ? `<p class="rule-note">No rent while ${escapeHtml(owner.name)} is in jail.</p>` : `<form class="dialog-form" id="rent-form"><label class="field"><span>Collect rent from</span><select id="rent-payer">${payers}</select></label>${property.kind === 'utility' ? '<label class="field"><span>Dice total</span><input id="rent-dice" type="number" min="2" max="12" value="7" required></label>' : ''}<button type="submit">COLLECT RENT</button></form>`;
     const mortgageButton = deed.mortgaged ? `<button class="secondary" data-deed-action="unmortgage">Unmortgage ${money.format(unmortgageCost(property))}</button>` : `<button class="secondary" data-deed-action="mortgage">Mortgage +${money.format(property.mortgage)}</button>`;
     const buildingButtons = property.kind === 'street' && !deed.mortgaged ? `<button class="secondary" data-deed-action="buy-building">＋ ${deed.buildings === 4 ? 'Hotel' : 'House'} ${money.format(property.houseCost)}</button>${deed.buildings ? `<button class="danger" data-deed-action="sell-building">− Sell building ${money.format(Math.floor(property.houseCost / 2))}</button>` : ''}` : '';
     controls = `${rentControl}<div class="dialog-actions">${mortgageButton}${buildingButtons}</div>`;
   }
+  if (isSpectator()) controls = '<p class="rule-note">View only: spectators can’t change deeds.</p>';
   $('#deed-dialog-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${GROUP_COLORS[property.group]}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">TITLE DEED</p><h2>${escapeHtml(property.name)}</h2><p class="muted">${status}${property.kind === 'street' && owner ? ` · ${buildingText}` : ''}</p></div><button class="dialog-close" aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Price</small><strong>${money.format(property.price)}</strong></div><div><small>Mortgage</small><strong>${money.format(property.mortgage)}</strong></div><div><small>${property.kind === 'street' ? 'House cost' : 'Type'}</small><strong>${property.kind === 'street' ? money.format(property.houseCost) : property.kind}</strong></div></div>${rentRows(property)}${controls}</div>`;
   applyStyleVars($('#deed-dialog-content'));
   $('.dialog-close').addEventListener('click', () => $('#deed-dialog').close());
@@ -588,14 +727,8 @@ function openDeed(propertyId) {
   $('#deed-dialog').showModal();
 }
 
-async function shareGame() {
-  const url = location.href;
-  try {
-    await navigator.clipboard.writeText(url);
-    toast('Game link copied.');
-  } catch {
-    prompt('Copy this game link:', url);
-  }
+function shareGame() {
+  return isSpectator() ? copyText(spectatorLink(), 'Spectator link copied.') : copyText(playerLink(), 'Game link copied.');
 }
 
 function bindEvents() {
@@ -630,8 +763,20 @@ function bindEvents() {
   $('#trade-first').addEventListener('change', renderTrade);
   $('#trade-second').addEventListener('change', renderTrade);
   $('#share-game').addEventListener('click', shareGame);
-  $('#show-qr').addEventListener('click', showQr);
-  $('#qr-copy').addEventListener('click', shareGame);
+  // Invite always opens on the player link; spectators only ever get the spectator link.
+  $('#show-qr').addEventListener('click', () => showQr(isSpectator() ? 'watch' : 'play'));
+  $$('input[name="qr-mode"]').forEach((input) => input.addEventListener('change', () => showQr(input.value)));
+  $('#qr-copy').addEventListener('click', () => copyText($('#qr-url').textContent, 'Link copied.'));
+  $('#copy-watch').addEventListener('click', () => copyText(spectatorLink(), 'Spectator link copied.'));
+  $('#switch-player').addEventListener('click', openIdentity);
+  $('#me-switch').addEventListener('click', openIdentity);
+  // Closing the picker without choosing means "banker" so it doesn't reappear every visit.
+  $('#identity-dialog').addEventListener('close', () => {
+    if (!me && game && !isSpectator()) {
+      saveIdentity('banker');
+      renderGame();
+    }
+  });
   $('#sound-toggle').addEventListener('click', () => {
     feedback.set(!feedback.enabled);
     renderSoundToggle();
@@ -645,7 +790,7 @@ function bindEvents() {
   $$('[data-undo]').forEach((button) => button.addEventListener('click', undoLast));
   $('#bankrupt-form').addEventListener('submit', declareBankruptcy);
   $('#bankrupt-player').addEventListener('change', renderCreditors);
-  ['#qr-dialog', '#results-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
+  ['#qr-dialog', '#results-dialog', '#identity-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
     if (event.target === $(selector) || event.target.closest('[data-close-dialog]')) $(selector).close();
   }));
   $('#deed-dialog').addEventListener('click', (event) => { if (event.target === $('#deed-dialog')) $('#deed-dialog').close(); });
