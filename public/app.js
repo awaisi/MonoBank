@@ -621,7 +621,60 @@ function renderBankruptcyPreview() {
 }
 
 
+// Deeds tab mode, remembered per device: 'list' (search + grid) or 'sets' (one row per color group).
+let deedMode = (() => { try { return localStorage.getItem('monobank:deedMode') === 'sets' ? 'sets' : 'list'; } catch { return 'list'; } })();
+const SET_ORDER = ['brown', 'lightblue', 'pink', 'orange', 'red', 'yellow', 'green', 'darkblue', 'railroad', 'utility'];
+const SET_NAMES = { brown: 'Brown', lightblue: 'Light blue', pink: 'Pink', orange: 'Orange', red: 'Red', yellow: 'Yellow', green: 'Green', darkblue: 'Dark blue', railroad: 'Railroads', utility: 'Utilities' };
+const shortDeedName = (name) => name.replace(/ (Avenue|Place)$/, '').replace(/ Railroad$/, ' RR').replace(/ Company$/, ' Co.');
+
+function setDeedMode(mode) {
+  deedMode = mode;
+  try { localStorage.setItem('monobank:deedMode', mode); } catch { /* storage unavailable */ }
+  renderDeeds();
+}
+
+// Who holds a color group: a complete set, someone one deed away, a split, or nobody yet. Display only.
+function setStatus(group, deeds) {
+  const counts = {};
+  deeds.forEach(({ owner }) => { if (owner) counts[owner.id] = (counts[owner.id] || 0) + 1; });
+  const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (!ranked.length) return { text: 'Unowned', tone: '' };
+  const [leadId, leadCount] = ranked[0];
+  const lead = playerById(leadId);
+  if (leadCount === deeds.length) {
+    const text = group === 'railroad' ? `${lead.name} has all 4` : group === 'utility' ? `${lead.name} has both` : `${lead.name}’s set`;
+    return { text: `✓ ${text}`, tone: 'full', owner: lead };
+  }
+  if (group === 'railroad') return { text: ranked.map(([id, count]) => `${playerById(id).name} ${count}`).join(' · '), tone: '' };
+  if (leadCount === deeds.length - 1) return { text: `${lead.name} needs 1`, tone: 'near' };
+  return { text: 'Split', tone: '' };
+}
+
+function renderSets() {
+  $('#deed-sets').innerHTML = SET_ORDER.map((group) => {
+    const deeds = game.properties.filter((property) => property.group === group).map((property) => ({ property, deed: game.deeds[property.id], owner: deedOwner(property.id) }));
+    const status = setStatus(group, deeds);
+    const tiles = deeds.map(({ property, deed, owner }) => {
+      // The owner pills above (deedOwnerFilter) dim every deed that doesn't match, so the sets stay in context.
+      const dim = deedOwnerFilter !== 'all' && (deed.ownerId || 'bank') !== deedOwnerFilter;
+      const buildings = deed.buildings === 5 ? '<i class="hotel"></i>' : '<i></i>'.repeat(deed.buildings);
+      const ownerHtml = owner ? `<span class="set-owner"><span class="mini-token" data-vars="--player-color=${escapeHtml(owner.color)}">${TOKEN_LABELS[seatOf(owner)]}</span>${escapeHtml(owner.name)}</span>` : '<span class="set-owner">Bank</span>';
+      const state = [owner ? owner.name : 'Bank', deed.buildings === 5 ? 'hotel' : deed.buildings ? `${deed.buildings} house${deed.buildings === 1 ? '' : 's'}` : '', deed.mortgaged ? 'mortgaged' : ''].filter(Boolean).join(', ');
+      return `<button type="button" class="set-tile ${owner ? '' : 'bank'} ${deed.mortgaged ? 'mortgaged' : ''} ${dim ? 'dim' : ''}" data-property-id="${property.id}" aria-label="${escapeHtml(`${property.name}: ${state}`)}" title="${escapeHtml(property.name)}"><span class="set-name">${escapeHtml(shortDeedName(property.name))}</span>${ownerHtml}${buildings ? `<span class="set-pips" aria-hidden="true">${buildings}</span>` : ''}${deed.mortgaged ? '<span class="set-tag">Mortgaged</span>' : ''}</button>`;
+    }).join('');
+    const vars = `--group-color=${GROUP_COLORS[group]};--set-owner=${status.owner ? escapeHtml(status.owner.color) : 'transparent'};--tiles=${deeds.length}`;
+    return `<section class="set-row ${status.tone === 'full' ? 'complete' : ''} ${deeds.length === 4 ? 'four' : ''}" data-group="${group}" data-vars="${vars}"><div class="set-label"><b>${SET_NAMES[group]}</b><small class="${status.tone}">${escapeHtml(status.text)}</small></div><div class="set-tiles">${tiles}</div></section>`;
+  }).join('') + '<p class="fine-print set-help">Tap a deed for rent, building and mortgage. An outline marks a complete set; “needs 1” shows who is one deed away.</p>';
+  applyStyleVars($('#deed-sets'));
+  $$('.set-tile', $('#deed-sets')).forEach((button) => button.addEventListener('click', () => openDeed(button.dataset.propertyId)));
+}
+
 function renderDeeds() {
+  $$('[data-deed-mode]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.deedMode === deedMode)));
+  $('#deeds-view').classList.toggle('sets-mode', deedMode === 'sets');
+  $('#deed-sets').hidden = deedMode !== 'sets';
+  $('#deed-grid').hidden = deedMode === 'sets';
+  if (deedMode === 'sets') return renderSets();
   const query = $('#deed-search').value.toLowerCase();
   const filter = $('#deed-filter').value;
   const filtered = game.properties.filter((property) => {
@@ -1162,6 +1215,7 @@ function bindEvents() {
   $$('#mobile-nav button').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.mobileView)));
   $$('[data-open-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.openView)));
   $('#deed-search').addEventListener('input', renderDeeds);
+  $$('[data-deed-mode]').forEach((button) => button.addEventListener('click', () => setDeedMode(button.dataset.deedMode)));
   $('#deed-filter').addEventListener('change', renderDeeds);
   $('#trade-first').addEventListener('change', renderTrade);
   $('#trade-second').addEventListener('change', renderTrade);

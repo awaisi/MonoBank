@@ -631,6 +631,69 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await viewer.close();
   });
 
+  await t.test('deeds Sets view shows every color group, who holds it, buildings and mortgages', async () => {
+    const sets = await store.create({ players: ['Ana', 'Ben', 'Cy'] });
+    const [ana, ben, cy] = sets.players;
+    const act = (action) => performAction(sets, action);
+    for (const [player, propertyId] of [[ana, 'park-place'], [ana, 'boardwalk'], [ben, 'mediterranean'], [cy, 'kentucky'], [cy, 'illinois'], [ana, 'reading-railroad'], [ben, 'pennsylvania-railroad'], [ben, 'bo-railroad'], [ben, 'atlantic'], [cy, 'ventnor'], [cy, 'electric-company'], [cy, 'water-works']]) {
+      act({ type: 'buy', playerId: player.id, propertyId });
+    }
+    act({ type: 'building', playerId: ana.id, propertyId: 'park-place', direction: 'buy' });
+    act({ type: 'building', playerId: ana.id, propertyId: 'boardwalk', direction: 'buy' });
+    act({ type: 'mortgage', playerId: cy.id, propertyId: 'kentucky' });
+    await store.save(sets);
+    const phone = await browser.newPage({ viewport: { width: 375, height: 760 } });
+    const phoneErrors = [];
+    phone.on('console', (message) => { if (message.type() === 'error') phoneErrors.push(message.text()); });
+    await phone.goto(`${base}/game/${sets.id}`);
+    await phone.click('#identity-options [data-identity="banker"]');
+    await phone.click('#mobile-nav [data-mobile-view="deeds"]');
+    assert.equal(await phone.getAttribute('[data-deed-mode="list"]', 'aria-pressed'), 'true', 'List is the default');
+    await phone.click('[data-deed-mode="sets"]');
+    assert.equal(await phone.getAttribute('[data-deed-mode="sets"]', 'aria-pressed'), 'true');
+    assert.equal(await phone.isVisible('#deed-search'), false, 'search and status filters belong to the list');
+    assert.equal(await phone.isVisible('#deed-grid'), false);
+    assert.equal(await phone.$$eval('#deed-sets .set-row', (rows) => rows.length), 10);
+    const status = (group) => phone.textContent(`.set-row[data-group="${group}"] .set-label small`);
+    assert.equal(await status('darkblue'), '✓ Ana’s set');
+    assert.equal(await status('brown'), 'Ben needs 1');
+    assert.equal(await status('red'), 'Cy needs 1', 'a mortgaged deed still counts toward the set');
+    assert.equal(await status('yellow'), 'Split');
+    assert.equal(await status('green'), 'Unowned');
+    assert.equal(await status('railroad'), 'Ben 2 · Ana 1');
+    assert.equal(await status('utility'), '✓ Cy has both');
+    assert.equal(await phone.$eval('.set-row[data-group="darkblue"]', (row) => row.classList.contains('complete')), true);
+    assert.equal(await phone.$$eval('.set-row[data-group="darkblue"] .set-pips i', (pips) => pips.length), 2, 'one house on each dark blue');
+    assert.deepEqual(await phone.$$eval('.set-row[data-group="darkblue"] .set-name', (names) => names.map((name) => name.textContent)), ['Park', 'Boardwalk']);
+    const kentucky = '.set-tile[data-property-id="kentucky"]';
+    assert.equal(await phone.$eval(kentucky, (tile) => tile.classList.contains('mortgaged')), true);
+    assert.equal(await phone.textContent(`${kentucky} .set-tag`), 'Mortgaged');
+    assert.equal(await phone.getAttribute(kentucky, 'aria-label'), 'Kentucky Avenue: Cy, mortgaged');
+    assert.equal(await phone.textContent('.set-tile[data-property-id="indiana"] .set-owner'), 'Bank');
+    // Four railroads wrap to two per row on a phone.
+    const railTops = await phone.$$eval('.set-row[data-group="railroad"] .set-tile', (tiles) => tiles.map((tile) => Math.round(tile.getBoundingClientRect().top)));
+    assert.equal(new Set(railTops).size, 2);
+    // The player tiles above still filter by owner: other deeds are dimmed, not hidden.
+    await phone.click('#players-bar [data-owner]:has-text("Ana")');
+    const dimmed = await phone.$$eval('.set-tile', (tiles) => tiles.filter((tile) => tile.classList.contains('dim')).length);
+    assert.equal(dimmed, 25, "everything but Ana's three deeds is dimmed");
+    assert.equal(await phone.$eval('.set-tile[data-property-id="boardwalk"]', (tile) => tile.classList.contains('dim')), false);
+    await phone.click('#players-bar [data-owner="all"]');
+    await phone.click('.set-tile[data-property-id="boardwalk"]');
+    await phone.waitForSelector('#deed-dialog[open]');
+    assert.match(await phone.textContent('#deed-dialog'), /Boardwalk/);
+    await phone.click('#deed-dialog .dialog-close');
+    assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'no horizontal scroll at 375 px');
+    // The choice is remembered on this device.
+    await phone.reload();
+    await phone.click('#mobile-nav [data-mobile-view="deeds"]');
+    assert.equal(await phone.isVisible('#deed-sets'), true);
+    await phone.click('[data-deed-mode="list"]');
+    assert.equal(await phone.isVisible('#deed-grid'), true);
+    assert.deepEqual(phoneErrors, []);
+    await phone.close();
+  });
+
   await t.test('logs no console or CSP errors', () => {
     assert.deepEqual(errors, []);
   });

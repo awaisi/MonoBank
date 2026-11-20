@@ -160,8 +160,10 @@
 
             <div id="deeds-view" class="console-view" hidden>
               <div class="view-heading"><div><p class="kicker">PROPERTY DESK</p><h2>Manage the board</h2></div><div class="bank-seal">⌂</div></div>
+              <div class="deed-modes" role="group" aria-label="Deeds view"><button type="button" data-deed-mode="list" aria-pressed="true">List</button><button type="button" data-deed-mode="sets" aria-pressed="false">Sets</button></div>
               <div class="filters"><label><span class="sr-only">Search deeds</span><input id="deed-search" type="search" placeholder="Search a deed…"></label><select id="deed-filter" aria-label="Filter deeds"><option value="all">All deeds</option><option value="available">Available</option><option value="owned">Owned</option><option value="mortgaged">Mortgaged</option></select></div>
               <div id="deed-grid" class="deed-grid"></div>
+              <div id="deed-sets" class="deed-sets" hidden></div>
             </div>
 
             <div id="trade-view" class="console-view" hidden>

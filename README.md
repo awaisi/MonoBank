@@ -19,6 +19,7 @@ Live at **https://monobank.divviq.app**.
 - **Bankruptcy**: hand a player's cash and deeds to their creditor or the Bank; the last player standing wins.
 - **Net worth** in each player's sheet, and **Finish game** at any time: pick the winner from the players still in (or let net worth decide), then see the final standings.
 - **No overdrafts:** a player can't spend more than they have. MonoBank shows how much is missing and offers to mortgage deeds or sell buildings first, or to declare bankruptcy.
+- **Sets view:** on **Deeds**, switch **List | Sets** to see every color group in one screen: who owns each deed, houses and hotels, mortgages, complete sets, and who is one deed away.
 - **Player tiles:** one row of tiles at the top of every tab shows each player's balance, net worth, deed count and status. Tap a player for their sheet (breakdown, deeds, one-tap quick actions). On **Deeds** the same tiles filter deeds by owner.
 - **Per-player quick actions:** Passed GO, Income Tax, Luxury Tax, Jail fee or any amount to or from the Bank, in one tap from the player's sheet.
 - **Activity built for long games:** the full history in 15-minute blocks with clock times, filters by player, type and search, each player's money in/out with their balance after every move, a "Game so far" summary, and a CSV download.
@@ -65,7 +66,7 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ```bash
 npm test           # 116 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # 33 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run e2e        # 34 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available.
@@ -86,6 +87,7 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 - **Your name first:** once a phone has picked its player, that player comes first in the player tiles, every player list and the activity filter.
 - **Paying rent:** open an owned deed, choose **Who pays rent?** and tap **Pay rent to Ana**. The owner is never offered as the payer.
 - **Filter deeds by owner:** on **Deeds**, the player tiles turn into an owner filter: tap **All deeds**, a player or **Bank** to see only those deeds. It combines with the search box and the status filter (available, owned, mortgaged).
+- **Sets view:** **Deeds → Sets** shows one row per color group (plus railroads and utilities) instead of the deed list. Each deed tile shows its owner's token (or *Bank*), houses (green blocks) or a hotel (red), and a striped *Mortgaged* look. The row label says where the set stands: **✓ Ali's set** (outlined in the owner's color), **Ovais needs 1**, **Split**, **Unowned**, or a railroad count like **Ali 2 · Ovais 1**. Tap a tile for the usual deed dialog. The player tiles still work as the owner filter: other owners' deeds are dimmed rather than hidden, so the sets stay in context. Each device remembers whether it last used List or Sets. It's a grid of MonoBank's own tiles, deliberately not a picture of the game board.
 - **Activity:** the Activity tab keeps the **whole game** (up to 2,000 entries), so a long game's opening moves aren't lost.
   - **Timeline:** entries are grouped into 15-minute blocks (*8:30 PM · 12 moves*). Each row shows its clock time; the last ten minutes show *now* or *5m*. Rows are compact, one line on wider screens.
   - **Compact controls:** one toolbar row holds a player picker (everyone, one player or the Bank), a type picker (**Payments**, **Rent**, **Deeds** for buying and mortgages, **Building**, **Trades**) and search, which matches deeds, players and notes. They all combine. On phones the search box opens from the 🔍 button (and stays open while it holds a search), **Undo** sits in the same row, and the tab's title row is dropped, so the list starts right under the controls.
