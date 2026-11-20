@@ -8,6 +8,22 @@ param deployApp bool
 param containerImage string
 param customDomain string
 param customDomainCertificateId string
+@secure()
+param adminToken string = ''
+
+// The admin usage page is enabled only when a token is supplied; it is stored as a Container Apps secret.
+var adminSecrets = empty(adminToken) ? [] : [
+  {
+    name: 'admin-token'
+    value: adminToken
+  }
+]
+var adminEnv = empty(adminToken) ? [] : [
+  {
+    name: 'ADMIN_TOKEN'
+    secretRef: 'admin-token'
+  }
+]
 
 // A custom domain is first attached unbound (so Azure can issue a managed
 // certificate for it), then bound with SNI once the certificate exists.
@@ -149,12 +165,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         allowInsecure: false
         customDomains: customDomains
       }
-      secrets: [
+      secrets: concat([
         {
           name: 'registry-password'
           value: registry.listCredentials().passwords[0].value
         }
-      ]
+      ], adminSecrets)
       registries: [
         {
           server: registry.properties.loginServer
@@ -172,12 +188,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
             cpu: json('0.25')
             memory: '0.5Gi'
           }
-          env: [
+          env: concat([
             { name: 'NODE_ENV', value: 'production' }
             { name: 'PORT', value: '3000' }
             { name: 'DATA_DIR', value: '/data' }
             { name: 'TRUST_PROXY', value: '1' }
-          ]
+          ], adminEnv)
           volumeMounts: [
             {
               volumeName: 'games'

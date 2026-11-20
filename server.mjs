@@ -8,6 +8,7 @@ import { GameError, performAction, publicGame, spectatorView, ledgerPage, ledger
 import { GameStore } from './lib/store.mjs';
 import { RateLimiter } from './lib/rate-limit.mjs';
 import { GameStreams } from './lib/streams.mjs';
+import { summarizeGame, aggregateUsage, adminTokenMatches, bearerToken, RuntimeMetrics, MIN_ADMIN_TOKEN_LENGTH } from './lib/admin.mjs';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -104,15 +105,33 @@ function enforce(limiter, key) {
   }
 }
 
-export function createAppServer({ store = new GameStore(), limits = {}, trustProxy = false, streams: streamOptions = {} } = {}) {
+// The admin page and its script exist only when an admin token is configured; they are never indexed.
+const ADMIN_PAGES = { '/admin': 'admin.html', '/admin/': 'admin.html', '/admin.html': 'admin.html', '/admin.js': 'admin.js' };
+
+export function createAppServer({ store = new GameStore(), limits = {}, trustProxy = false, streams: streamOptions = {}, adminToken = null, metrics = new RuntimeMetrics() } = {}) {
   const { createPerHour, apiPerMinute } = { ...DEFAULT_LIMITS, ...limits };
   const createLimiter = new RateLimiter({ limit: createPerHour, windowMs: HOUR });
   const apiLimiter = new RateLimiter({ limit: apiPerMinute, windowMs: MINUTE });
+  // Wrong admin tokens are limited much harder than normal API use (10 per 15 minutes per address).
+  const adminFailLimiter = new RateLimiter({ limit: 10, windowMs: 15 * MINUTE });
+  const adminEnabled = typeof adminToken === 'string' && adminToken.length >= MIN_ADMIN_TOKEN_LENGTH;
   const streams = new GameStreams({ ...streamOptions, headers: securityHeaders });
+
+  const openStream = (req, res, game, view) => {
+    try {
+      const client = streams.open(req, res, game, view);
+      metrics.streams.opened += 1;
+      return client;
+    } catch (error) {
+      metrics.streams.rejected += 1;
+      throw error;
+    }
+  };
 
   const server = createNodeServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
+      res.on('finish', () => metrics.request(url.pathname, res.statusCode));
       if (req.method === 'GET' && url.pathname === '/health') {
         return sendJson(res, 200, { status: 'ok', service: 'monobank', storage: store.kind });
       }
@@ -120,6 +139,21 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         const client = clientAddress(req, trustProxy);
         enforce(apiLimiter, client);
         if (req.method === 'POST' && url.pathname === '/api/games') enforce(createLimiter, client);
+      }
+      if (url.pathname === '/api/admin/stats') {
+        if (!adminEnabled || req.method !== 'GET') throw new GameError('Not found.', 404);
+        if (!adminTokenMatches(adminToken, bearerToken(req.headers.authorization))) {
+          enforce(adminFailLimiter, clientAddress(req, trustProxy));
+          const error = new GameError('That admin token is not right.', 401);
+          error.headers = { 'WWW-Authenticate': 'Bearer' };
+          throw error;
+        }
+        const { summaries, storageBytes } = await store.usage(summarizeGame);
+        return sendJson(res, 200, {
+          usage: aggregateUsage(summaries),
+          storage: { kind: store.kind, bytes: storageBytes, gamesInMemory: store.games.size, retentionDays: Math.round(store.ttlMs / 86_400_000), finishedRetentionDays: Math.round(Math.min(store.endedTtlMs, store.ttlMs) / 86_400_000) },
+          runtime: metrics.snapshot({ liveStreams: streams.total, memoryMb: Math.round(process.memoryUsage().rss / 1048576) })
+        });
       }
       if (req.method === 'POST' && url.pathname === '/api/games') {
         const game = await store.create(await readJson(req));
@@ -130,12 +164,16 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         const game = await store.get(match[1]);
         const [, , sub] = match;
         if (req.method === 'GET' && !sub) return sendJson(res, 200, publicGame(game));
-        if (req.method === 'GET' && sub === '/events') return streams.open(req, res, game, publicGame);
+        if (req.method === 'GET' && sub === '/events') return openStream(req, res, game, publicGame);
         if (req.method === 'GET' && sub === '/transactions') return sendJson(res, 200, ledgerPage(game, url.searchParams.get('before'), url.searchParams.get('limit') ?? undefined));
         if (req.method === 'GET' && sub === '/activity.csv') return sendCsv(res, game);
         if (req.method === 'POST' && sub === '/actions') {
-          performAction(game, await readJson(req));
+          const action = await readJson(req);
+          performAction(game, action);
+          metrics.action(String(action.type));
+          const saveStarted = performance.now();
           await store.save(game);
+          metrics.save(performance.now() - saveStarted);
           streams.publish(game);
           return sendJson(res, 200, publicGame(game));
         }
@@ -144,15 +182,17 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
       const watch = url.pathname.match(/^\/api\/watch\/([a-f0-9]{16})(\/events|\/transactions|\/activity\.csv)?$/);
       if (watch && req.method === 'GET') {
         const game = await store.getByWatchToken(watch[1]);
-        if (watch[2] === '/events') return streams.open(req, res, game, spectatorView);
+        if (watch[2] === '/events') return openStream(req, res, game, spectatorView);
         if (watch[2] === '/transactions') return sendJson(res, 200, ledgerPage(game, url.searchParams.get('before'), url.searchParams.get('limit') ?? undefined));
         if (watch[2] === '/activity.csv') return sendCsv(res, game);
         return sendJson(res, 200, spectatorView(game));
       }
       if (url.pathname.startsWith('/api/')) throw new GameError('Not found.', 404);
 
-      const appRoute = url.pathname.startsWith('/game/') || url.pathname.startsWith('/watch/');
-      const requested = url.pathname === '/' || appRoute ? 'index.html' : url.pathname.slice(1);
+      const adminPage = ADMIN_PAGES[url.pathname];
+      if (adminPage && !adminEnabled) throw new GameError('Not found.', 404);
+      const appRoute = url.pathname.startsWith('/game/') || url.pathname.startsWith('/watch/') || Boolean(adminPage);
+      const requested = adminPage || (url.pathname === '/' || appRoute ? 'index.html' : url.pathname.slice(1));
       const safePath = normalize(requested).replace(/^(\.\.[/\\])+/, '');
       const filePath = join(ROOT, safePath);
       if (!filePath.startsWith(ROOT)) throw new GameError('Not found.', 404);
@@ -169,8 +209,9 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         'Cache-Control': 'no-cache',
         ETag: etag,
         ...variant.headers,
-        // Game links are private sessions: keep them out of search results.
-        ...(appRoute ? { 'X-Robots-Tag': 'noindex, nofollow' } : {})
+        // Game links and the admin page are private: keep them out of search results.
+        ...(appRoute ? { 'X-Robots-Tag': 'noindex, nofollow' } : {}),
+        ...(adminPage ? { 'Cache-Control': 'no-store' } : {})
       };
       if (req.headers['if-none-match'] === etag) {
         res.writeHead(304, headers);
@@ -182,6 +223,7 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
       if (error?.code === 'ENOENT') return sendJson(res, 404, { error: 'Not found.' });
       const status = error instanceof GameError ? error.status : 500;
       if (status === 500) console.error(error);
+      metrics.error(status, error instanceof GameError ? error.code : undefined);
       const body = { error: status === 500 ? 'Something went wrong.' : error.message };
       if (status !== 500 && error.code) Object.assign(body, { code: error.code, details: error.details });
       sendJson(res, status, body, error.headers);
@@ -216,6 +258,17 @@ export async function storeFromEnv(env = process.env, logger = console) {
   }
 }
 
+/** The admin token from ADMIN_TOKEN, or null (admin page disabled) when unset or too short to be safe. */
+export function adminTokenFromEnv(env = process.env, logger = console) {
+  const token = String(env.ADMIN_TOKEN || '').trim();
+  if (!token) return null;
+  if (token.length < MIN_ADMIN_TOKEN_LENGTH) {
+    logger.warn(`ADMIN_TOKEN is shorter than ${MIN_ADMIN_TOKEN_LENGTH} characters; the admin page stays disabled.`);
+    return null;
+  }
+  return token;
+}
+
 export function limitsFromEnv(env = process.env) {
   return {
     createPerHour: Number(env.RATE_LIMIT_CREATE_PER_HOUR) || DEFAULT_LIMITS.createPerHour,
@@ -226,7 +279,7 @@ export function limitsFromEnv(env = process.env) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 3000);
   const store = await storeFromEnv();
-  const server = createAppServer({ store, limits: limitsFromEnv(), trustProxy: process.env.TRUST_PROXY === '1' });
+  const server = createAppServer({ store, limits: limitsFromEnv(), trustProxy: process.env.TRUST_PROXY === '1', adminToken: adminTokenFromEnv() });
   server.listen(port, '0.0.0.0', () => console.log(`MonoBank is ready at http://localhost:${port} (${store.kind} storage)`));
   const shutdown = () => server.close(() => store.flush().finally(() => process.exit(0)));
   process.on('SIGTERM', shutdown);
