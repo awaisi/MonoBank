@@ -7,11 +7,57 @@ let game = null;
 let activeView = 'pay';
 let pollTimer;
 
+// The CSP (style-src 'self') blocks style="" attributes parsed from innerHTML,
+// so markup carries data-vars="--name=value;--other=value" and this helper
+// applies them through the CSSOM, which the CSP allows.
+function applyStyleVars(root = document) {
+  $$('[data-vars]', root).forEach((element) => {
+    element.dataset.vars.split(';').forEach((pair) => {
+      const [name, value] = pair.split('=');
+      if (name?.startsWith('--') && value) element.style.setProperty(name.trim(), value.trim());
+    });
+    delete element.dataset.vars;
+  });
+}
+
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[character]);
 const gameIdFromPath = () => location.pathname.match(/^\/game\/([a-f0-9]{16})\/?$/)?.[1];
 const playerById = (id) => game?.players.find((player) => player.id === id);
 const propertyById = (id) => game?.properties.find((property) => property.id === id);
 const deedOwner = (propertyId) => playerById(game?.deeds[propertyId]?.ownerId);
+const rules = () => game?.rules || {};
+const unmortgageCost = (property) => Math.round(property.mortgage * (1 + (rules().mortgageInterestPercent ?? 10) / 100));
+
+// Mirrors rulesSummary() in lib/game.mjs for display only; the server enforces every rule.
+function rulesSummary(value) {
+  const notes = [];
+  if (value.freeParkingJackpot) notes.push(value.freeParkingSeed ? `Free Parking jackpot (seeded ${money.format(value.freeParkingSeed)})` : 'Free Parking jackpot');
+  if (value.doubleGoOnLanding) notes.push('$400 for landing on GO');
+  if (value.noRentInJail) notes.push('No rent while in jail');
+  if (value.auctions === false) notes.push('No auctions');
+  if (value.evenBuilding === false) notes.push('Uneven building allowed');
+  if (value.mortgageInterestPercent != null && value.mortgageInterestPercent !== 10) notes.push(`${value.mortgageInterestPercent}% mortgage interest`);
+  return notes;
+}
+
+function setupRules() {
+  const jackpot = $('#rule-free-parking').checked;
+  return {
+    freeParkingJackpot: jackpot,
+    freeParkingSeed: jackpot ? Number($('#rule-free-parking-seed').value || 0) : 0,
+    doubleGoOnLanding: $('#rule-double-go').checked,
+    noRentInJail: $('#rule-no-rent-jail').checked,
+    auctions: $('#rule-auctions').checked,
+    evenBuilding: $('#rule-even-building').checked,
+    mortgageInterestPercent: Number($('#rule-mortgage-interest').value || 0)
+  };
+}
+
+function updateSetupRules() {
+  $('#rule-seed-field').hidden = !$('#rule-free-parking').checked;
+  const notes = rulesSummary(setupRules());
+  $('#setup-rules-summary').textContent = notes.length ? `${notes.length} house rule${notes.length === 1 ? '' : 's'}` : 'Classic rules';
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -47,7 +93,7 @@ function addPlayerInput(name = '') {
   const index = container.children.length;
   const field = document.createElement('div');
   field.className = 'player-field';
-  field.innerHTML = `<span class="token" style="background:${['#d9574f','#3c8fd1','#d6a53c','#45a477'][index]}">${TOKEN_LABELS[index]}</span><label class="sr-only" for="player-${index}">Player ${index + 1} name</label><input id="player-${index}" maxlength="24" autocomplete="off" placeholder="Player ${index + 1}" value="${escapeHtml(name)}" required><button class="remove-player" type="button" aria-label="Remove player ${index + 1}">×</button>`;
+  field.innerHTML = `<span class="token">${TOKEN_LABELS[index]}</span><label class="sr-only" for="player-${index}">Player ${index + 1} name</label><input id="player-${index}" maxlength="24" autocomplete="off" placeholder="Player ${index + 1}" value="${escapeHtml(name)}" required><button class="remove-player" type="button" aria-label="Remove player ${index + 1}">×</button>`;
   $('.remove-player', field).addEventListener('click', () => {
     if (container.children.length <= 2) return toast('A game needs at least two players.', 'error');
     field.remove();
@@ -77,7 +123,7 @@ async function createGame(event) {
   $('#setup-error').textContent = '';
   setBusy(form, true);
   try {
-    const created = await api('/api/games', { method: 'POST', body: { players, startingBalance: Number($('#starting-balance').value) } });
+    const created = await api('/api/games', { method: 'POST', body: { players, startingBalance: Number($('#starting-balance').value), rules: setupRules() } });
     history.pushState({}, '', `/game/${created.id}`);
     game = created;
     showGame();
@@ -125,6 +171,7 @@ function showGame() {
 }
 
 function renderGame() {
+  renderRules();
   renderPlayers();
   renderSelects();
   renderDeeds();
@@ -133,16 +180,43 @@ function renderGame() {
   switchView(activeView);
 }
 
-function renderPlayers() {
-  $('#total-cash').textContent = `${game.players.length} at the table`;
-  $('#player-cards').innerHTML = game.players.map((player, index) => {
-    const deeds = Object.values(game.deeds).filter((deed) => deed.ownerId === player.id).length;
-    return `<article class="player-card" style="--player-color:${player.color}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${deeds} deed${deeds === 1 ? '' : 's'} · ${player.balance < 0 ? 'Needs attention' : 'Ready to play'}</div></article>`;
-  }).join('');
+function renderRules() {
+  const notes = rulesSummary(rules());
+  $('#rules-line').textContent = notes.length ? `House rules: ${notes.join(' · ')}` : 'Classic rules';
+  $('#preset-land-go').hidden = !rules().doubleGoOnLanding;
 }
 
-function optionList({ includeBank = false, selected = '' } = {}) {
-  const values = includeBank ? [{ id: 'bank', name: 'The Bank' }, ...game.players] : game.players;
+function renderPlayers() {
+  $('#total-cash').textContent = `${game.players.length} at the table`;
+  const jailRule = rules().noRentInJail;
+  const cards = game.players.map((player, index) => {
+    const deeds = Object.values(game.deeds).filter((deed) => deed.ownerId === player.id).length;
+    const status = player.inJail && jailRule ? 'In jail · no rent' : player.balance < 0 ? 'Needs attention' : 'Ready to play';
+    const jailButton = jailRule ? `<button type="button" class="jail-toggle" data-jail-player="${player.id}" aria-pressed="${player.inJail ? 'true' : 'false'}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : '';
+    return `<article class="player-card ${player.inJail && jailRule ? 'in-jail' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${deeds} deed${deeds === 1 ? '' : 's'} · ${status}</div>${jailButton}</article>`;
+  });
+  if (rules().freeParkingJackpot) {
+    cards.push(`<article class="player-card parking-card" data-vars="--player-color=#d6b661"><div class="player-card-head"><span class="mini-token">P</span><strong>Free Parking</strong></div><div class="balance">${money.format(game.freeParking || 0)}</div><form class="parking-form" id="parking-form"><label class="sr-only" for="parking-winner">Who landed on Free Parking?</label><select id="parking-winner">${optionList()}</select><button type="submit" ${game.freeParking ? '' : 'disabled'}>Collect</button></form></article>`);
+  }
+  $('#player-cards').innerHTML = cards.join('');
+  applyStyleVars($('#player-cards'));
+  $$('[data-jail-player]').forEach((button) => button.addEventListener('click', () => {
+    const target = playerById(button.dataset.jailPlayer);
+    submitAction({ type: 'jail', playerId: target.id, inJail: !target.inJail }, target.inJail ? `${target.name} is out of jail.` : `${target.name} went to jail.`);
+  }));
+  $('#parking-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const winner = playerById($('#parking-winner').value);
+    submitAction({ type: 'collect-parking', playerId: winner.id }, `${winner.name} collected Free Parking.`);
+  });
+}
+
+function optionList({ includeBank = false, includeParking = false, selected = '' } = {}) {
+  const values = [
+    ...(includeBank ? [{ id: 'bank', name: 'The Bank' }] : []),
+    ...(includeParking && rules().freeParkingJackpot ? [{ id: 'parking', name: 'Free Parking pot' }] : []),
+    ...game.players
+  ];
   return values.map((item) => `<option value="${item.id}" ${item.id === selected ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
 }
 
@@ -150,7 +224,7 @@ function renderSelects() {
   const from = $('#payment-from').value || game.players[0]?.id;
   const to = $('#payment-to').value || game.players[1]?.id;
   $('#payment-from').innerHTML = optionList({ includeBank: true, selected: from });
-  $('#payment-to').innerHTML = optionList({ includeBank: true, selected: to });
+  $('#payment-to').innerHTML = optionList({ includeBank: true, includeParking: true, selected: to });
   if ($('#payment-from').value === $('#payment-to').value && game.players[1]) $('#payment-to').value = game.players[1].id;
 
   const first = $('#trade-first').value || game.players[0]?.id;
@@ -173,8 +247,9 @@ function renderDeeds() {
     const deed = game.deeds[property.id];
     const owner = deedOwner(property.id);
     const buildings = deed.buildings === 5 ? 'Hotel' : deed.buildings ? `${deed.buildings} house${deed.buildings > 1 ? 's' : ''}` : '';
-    return `<button class="deed-card ${deed.mortgaged ? 'mortgaged' : ''}" data-property-id="${property.id}" style="--deed-color:${GROUP_COLORS[property.group]};--owner-color:${owner?.color || '#64716b'}"><span class="deed-color"></span><span class="deed-body"><strong>${escapeHtml(property.name)}</strong><small>${property.kind === 'street' ? escapeHtml(property.group.replace('lightblue','Light blue').replace('darkblue','Dark blue')) : property.kind}${buildings ? ` · ${buildings}` : ''}${deed.mortgaged ? ' · Mortgaged' : ''}</small><span class="deed-status"><b>${money.format(property.price)}</b><small class="owner-chip">${owner ? escapeHtml(owner.name) : 'BANK'}</small></span></span></button>`;
+    return `<button class="deed-card ${deed.mortgaged ? 'mortgaged' : ''}" data-property-id="${property.id}" data-vars="--deed-color=${GROUP_COLORS[property.group]};--owner-color=${escapeHtml(owner?.color || '#64716b')}"><span class="deed-color"></span><span class="deed-body"><strong>${escapeHtml(property.name)}</strong><small>${property.kind === 'street' ? escapeHtml(property.group.replace('lightblue','Light blue').replace('darkblue','Dark blue')) : property.kind}${buildings ? ` · ${buildings}` : ''}${deed.mortgaged ? ' · Mortgaged' : ''}</small><span class="deed-status"><b>${money.format(property.price)}</b><small class="owner-chip">${owner ? escapeHtml(owner.name) : 'BANK'}</small></span></span></button>`;
   }).join('') || '<div class="empty-state">No deeds match this filter.</div>';
+  applyStyleVars($('#deed-grid'));
   $$('.deed-card', $('#deed-grid')).forEach((button) => button.addEventListener('click', () => openDeed(button.dataset.propertyId)));
 }
 
@@ -195,7 +270,7 @@ function ownedDeedChecks(playerId, side) {
 }
 
 function transactionIcon(type) {
-  return ({ system:'M', transfer:'↔', rent:'R', purchase:'⌂', auction:'⌂', mortgage:'$', unmortgage:'$', building:'▰', trade:'⇄', tax:'$' })[type] || '$';
+  return ({ system:'M', transfer:'↔', rent:'R', purchase:'⌂', auction:'⌂', mortgage:'$', unmortgage:'$', building:'▰', trade:'⇄', tax:'$', parking:'P', jail:'#' })[type] || '$';
 }
 
 function timeAgo(iso) {
@@ -246,7 +321,8 @@ async function pay(event) {
   const fromId = $('#payment-from').value;
   const toId = $('#payment-to').value;
   const note = $('#payment-note').value.trim();
-  const ok = await submitAction({ type:'transfer', fromId, toId, amount:Number($('#payment-amount').value), note, category: /tax/i.test(note) ? 'tax' : 'transfer' }, 'Funds transferred.');
+  const category = /tax/i.test(note) ? 'tax' : toId === 'parking' ? 'fee' : 'transfer';
+  const ok = await submitAction({ type:'transfer', fromId, toId, amount:Number($('#payment-amount').value), note, category }, 'Funds transferred.');
   if (ok) { $('#payment-amount').value = ''; $('#payment-note').value = ''; }
 }
 
@@ -275,19 +351,25 @@ function openDeed(propertyId) {
   const buildingText = deed.buildings === 5 ? 'Hotel' : `${deed.buildings} house${deed.buildings === 1 ? '' : 's'}`;
   let controls = '';
   if (!owner) {
-    controls = `<form class="dialog-form" id="buy-deed-form"><label class="field"><span>Buyer</span><select id="deed-buyer">${optionList()}</select></label><label class="field"><span>Price / winning bid</span><input id="deed-price" type="number" min="1" step="1" value="${property.price}" required></label><label><input id="deed-auction" type="checkbox"> Bought at auction</label><button type="submit">ACQUIRE DEED</button></form>`;
+    const auctions = rules().auctions !== false;
+    const priceField = auctions
+      ? `<label class="field"><span>Price / winning bid</span><input id="deed-price" type="number" min="1" step="1" value="${property.price}" required></label><label><input id="deed-auction" type="checkbox"> Bought at auction</label>`
+      : `<label class="field"><span>List price <small>auctions are off</small></span><input id="deed-price" type="number" value="${property.price}" readonly></label>`;
+    controls = `<form class="dialog-form" id="buy-deed-form"><label class="field"><span>Buyer</span><select id="deed-buyer">${optionList()}</select></label>${priceField}<button type="submit">ACQUIRE DEED</button></form>`;
   } else {
     const payers = game.players.filter((player) => player.id !== owner.id).map((player) => `<option value="${player.id}">${escapeHtml(player.name)}</option>`).join('');
-    const rentControl = deed.mortgaged ? '' : `<form class="dialog-form" id="rent-form"><label class="field"><span>Collect rent from</span><select id="rent-payer">${payers}</select></label>${property.kind === 'utility' ? '<label class="field"><span>Dice total</span><input id="rent-dice" type="number" min="2" max="12" value="7" required></label>' : ''}<button type="submit">COLLECT RENT</button></form>`;
-    const mortgageButton = deed.mortgaged ? `<button class="secondary" data-deed-action="unmortgage">Unmortgage ${money.format(Math.round(property.mortgage * 1.1))}</button>` : `<button class="secondary" data-deed-action="mortgage">Mortgage +${money.format(property.mortgage)}</button>`;
+    const jailed = rules().noRentInJail && owner.inJail;
+    const rentControl = deed.mortgaged ? '' : jailed ? `<p class="rule-note">No rent while ${escapeHtml(owner.name)} is in jail.</p>` : `<form class="dialog-form" id="rent-form"><label class="field"><span>Collect rent from</span><select id="rent-payer">${payers}</select></label>${property.kind === 'utility' ? '<label class="field"><span>Dice total</span><input id="rent-dice" type="number" min="2" max="12" value="7" required></label>' : ''}<button type="submit">COLLECT RENT</button></form>`;
+    const mortgageButton = deed.mortgaged ? `<button class="secondary" data-deed-action="unmortgage">Unmortgage ${money.format(unmortgageCost(property))}</button>` : `<button class="secondary" data-deed-action="mortgage">Mortgage +${money.format(property.mortgage)}</button>`;
     const buildingButtons = property.kind === 'street' && !deed.mortgaged ? `<button class="secondary" data-deed-action="buy-building">＋ ${deed.buildings === 4 ? 'Hotel' : 'House'} ${money.format(property.houseCost)}</button>${deed.buildings ? `<button class="danger" data-deed-action="sell-building">− Sell building ${money.format(Math.floor(property.houseCost / 2))}</button>` : ''}` : '';
     controls = `${rentControl}<div class="dialog-actions">${mortgageButton}${buildingButtons}</div>`;
   }
-  $('#deed-dialog-content').innerHTML = `<div class="dialog-color" style="--deed-color:${GROUP_COLORS[property.group]}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">TITLE DEED</p><h2>${escapeHtml(property.name)}</h2><p class="muted">${status}${property.kind === 'street' && owner ? ` · ${buildingText}` : ''}</p></div><button class="dialog-close" aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Price</small><strong>${money.format(property.price)}</strong></div><div><small>Mortgage</small><strong>${money.format(property.mortgage)}</strong></div><div><small>${property.kind === 'street' ? 'House cost' : 'Type'}</small><strong>${property.kind === 'street' ? money.format(property.houseCost) : property.kind}</strong></div></div>${rentRows(property)}${controls}</div>`;
+  $('#deed-dialog-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${GROUP_COLORS[property.group]}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">TITLE DEED</p><h2>${escapeHtml(property.name)}</h2><p class="muted">${status}${property.kind === 'street' && owner ? ` · ${buildingText}` : ''}</p></div><button class="dialog-close" aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Price</small><strong>${money.format(property.price)}</strong></div><div><small>Mortgage</small><strong>${money.format(property.mortgage)}</strong></div><div><small>${property.kind === 'street' ? 'House cost' : 'Type'}</small><strong>${property.kind === 'street' ? money.format(property.houseCost) : property.kind}</strong></div></div>${rentRows(property)}${controls}</div>`;
+  applyStyleVars($('#deed-dialog-content'));
   $('.dialog-close').addEventListener('click', () => $('#deed-dialog').close());
   $('#buy-deed-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (await submitAction({ type:'buy', playerId:$('#deed-buyer').value, propertyId, amount:Number($('#deed-price').value), auction:$('#deed-auction').checked }, 'Deed acquired.')) $('#deed-dialog').close();
+    if (await submitAction({ type:'buy', playerId:$('#deed-buyer').value, propertyId, amount:Number($('#deed-price').value), auction:$('#deed-auction')?.checked || false }, 'Deed acquired.')) $('#deed-dialog').close();
   });
   $('#rent-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -325,14 +407,16 @@ function bindEvents() {
   $$('.preset-row button').forEach((button) => button.addEventListener('click', () => {
     $('#payment-amount').value = button.dataset.preset;
     $('#payment-note').value = button.dataset.note;
-    if (button.dataset.note === 'Passed GO') {
+    if (/GO$/.test(button.dataset.note)) {
       $('#payment-from').value = 'bank';
-      if ($('#payment-to').value === 'bank') $('#payment-to').value = game.players[0].id;
+      if (['bank', 'parking'].includes($('#payment-to').value)) $('#payment-to').value = game.players[0].id;
     } else {
       if ($('#payment-from').value === 'bank') $('#payment-from').value = game.players[0].id;
-      $('#payment-to').value = 'bank';
+      // Taxes and fees feed the Free Parking pot when that house rule is on.
+      $('#payment-to').value = rules().freeParkingJackpot ? 'parking' : 'bank';
     }
   }));
+  $$('.house-rules input').forEach((input) => input.addEventListener('input', updateSetupRules));
   $$('.view-tabs button').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
   $$('#mobile-nav button').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.mobileView)));
   $$('[data-open-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.openView)));

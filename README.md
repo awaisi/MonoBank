@@ -11,6 +11,8 @@ MonoBank is a mobile-first, shared banking companion for a classic property-trad
 - Manage all 28 classic U.S. deeds, including purchase and auction prices.
 - Calculate street, complete-color-set, railroad, and utility rent automatically.
 - Mortgage and unmortgage deeds; buy and sell houses/hotels with even-building checks.
+- Pick **house rules** per game: Free Parking jackpot, $400 for landing on GO, no rent in jail, auctions on/off, even building on/off, and mortgage interest.
+- Track who is in jail, and run a Free Parking pot with its own balance and one-tap payout.
 - Trade deeds and cash in one atomic transaction.
 - Use an accessible responsive UI designed as a tableside game console.
 - Keep sessions in server memory for 24 hours after the latest activity.
@@ -33,6 +35,31 @@ npm test
 npm run check
 npm run dev
 ```
+
+Or run the production container:
+
+```bash
+docker build -t monobank .
+docker run -p 3000:3000 monobank
+```
+
+Contributor and coding-agent guidance (architecture, conventions, deployment constraints) lives in [`CLAUDE.md`](CLAUDE.md).
+
+## House rules
+
+Open **House rules** on the new-game screen to choose how your table plays. Rules are fixed once the bank opens, shown under the console title, and recorded in the first activity entry. The server enforces every rule.
+
+| Rule | Default | What it changes |
+| --- | --- | --- |
+| Free Parking jackpot | Off | Adds a **Free Parking pot** account. The Jail, Tax and Luxury shortcuts pay into it, and any payment can target it. A pot card shows the balance and a **Collect** button for whoever lands on Free Parking. |
+| Seed the pot | $0 | With the jackpot on, the Bank puts this amount in the pot at the start and again after every collection (a common choice is $500). |
+| $400 for landing on GO | Off | Adds a **Land on GO +$400** shortcut alongside the usual **GO +$200**. |
+| No rent while in jail | Off | Adds **Send to jail / Release from jail** to each player card. A jailed owner cannot collect rent. |
+| Auctions | On | Off: unbought deeds can only be bought at list price; the auction option disappears. |
+| Even building | On | Off: houses can be built and sold unevenly across a color set (owning the full set is still required). |
+| Mortgage interest | 10% | Interest added when unmortgaging, from 0% to 100%. |
+
+Games created through the API without `rules` use the defaults above, which match the classic rules.
 
 ## How sessions work
 
@@ -126,16 +153,28 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 
 ## API overview
 
-- `POST /api/games` — create a game
-- `GET /api/games/:id` — read current game state
-- `POST /api/games/:id/actions` — perform a transfer, buy, rent, mortgage, building, or trade action
+- `POST /api/games` — create a game: `{ "players": ["Ana", "Ben"], "startingBalance": 1500, "rules": { "freeParkingJackpot": true, "freeParkingSeed": 500 } }` (`rules` is optional; omitted keys use the defaults)
+- `GET /api/games/:id` — read current game state, including `rules`, `freeParking` (pot balance) and each player's `inJail`
+- `POST /api/games/:id/actions` — perform one action, selected by `type`:
+
+  | `type` | Fields | Notes |
+  | --- | --- | --- |
+  | `transfer` | `fromId`, `toId`, `amount`, `note?`, `category?` | Account IDs are player IDs, `bank`, or `parking` (destination only, jackpot on) |
+  | `buy` | `playerId`, `propertyId`, `amount?`, `auction?` | List price only when auctions are off |
+  | `rent` | `payerId`, `propertyId`, `diceTotal?` | `diceTotal` (2–12) for utilities; blocked for a jailed owner under "No rent while in jail" |
+  | `mortgage` / `unmortgage` | `playerId`, `propertyId` | Unmortgage cost uses the game's interest rate |
+  | `building` | `playerId`, `propertyId`, `direction` (`buy`/`sell`) | Even-building check depends on the house rule |
+  | `trade` | `firstPlayerId`, `secondPlayerId`, `firstCash`, `secondCash`, `firstPropertyIds`, `secondPropertyIds` | Atomic |
+  | `collect-parking` | `playerId` | Pays out the pot and reseeds it; jackpot rule only |
+  | `jail` | `playerId`, `inJail` (boolean) | Records a player entering or leaving jail |
+
 - `GET /health` — container liveness/readiness probe and deployment verification
 
 The client sends an expected revision with each action. A stale browser receives HTTP 409 and refreshes instead of silently overwriting a newer transaction.
 
 ## Security and accessibility
 
-MonoBank sets a restrictive Content Security Policy and related browser security headers, caps request bodies, validates all actions server-side, escapes player-provided text in the client, uses native dialog and form controls, supports keyboard focus, exposes labels and live notifications, provides strong contrast, adapts to reduced-motion preferences, and includes a 320px-friendly mobile layout.
+MonoBank sets a restrictive Content Security Policy (no inline scripts or style attributes; per-element colors are applied through the CSSOM) and related browser security headers, caps request bodies, validates all actions server-side, escapes player-provided text in the client, uses native dialog and form controls, supports keyboard focus, exposes labels and live notifications, provides strong contrast, adapts to reduced-motion preferences, and includes a 320px-friendly mobile layout.
 
 ## License
 
