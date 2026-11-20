@@ -760,9 +760,33 @@ async function declareBankruptcy(event) {
   if (await submitAction({ type: 'bankrupt', playerId: debtor.id, creditorId }, `${debtor.name} is out of the game.`)) $('#bankruptcy').open = false;
 }
 
-async function endGame() {
-  if (!confirm('End the game now? The player with the highest net worth wins. You can undo this.')) return;
-  await submitAction({ type: 'end-game' }, 'Game over.');
+// End the game at any time: the highest net worth wins by default, or the table picks a winner from the players still in.
+function endGame() {
+  const rows = activePlayers().map((player) => ({ player, worth: standingFor(player.id)?.total ?? player.balance }));
+  const best = Math.max(...rows.map((row) => row.worth));
+  const leaders = rows.filter((row) => row.worth === best).map((row) => row.player.name);
+  const leaderText = leaders.length > 2 ? `${leaders.length}-way tie` : leaders.length > 1 ? `${leaders.join(' & ')} tie` : `${leaders[0]} wins`;
+  const options = [
+    `<label class="winner-option"><input type="radio" name="winner" value="" checked><span class="mini-token" aria-hidden="true">★</span><span><strong>Highest net worth</strong><small>${escapeHtml(leaderText)} · ${money.format(best)}</small></span></label>`,
+    ...orderedPlayers().filter((player) => !player.bankrupt).map((player) => {
+      const worth = standingFor(player.id)?.total ?? player.balance;
+      return `<label class="winner-option" data-vars="--player-color=${escapeHtml(player.color)}"><input type="radio" name="winner" value="${player.id}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span><strong>${escapeHtml(player.name)}</strong><small>Net worth ${money.format(worth)}</small></span></label>`;
+    })
+  ].join('');
+  $('#end-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINISH THE GAME</p><h2 id="end-title">Who wins?</h2><p class="muted">End the game now, at any point. Pick the winner from the players still in, or let net worth decide.</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><form id="end-form" class="dialog-form"><fieldset class="winner-options"><legend class="sr-only">Winner</legend>${options}</fieldset><p class="fine-print">Play stops for everyone and the final standings open. Undo reopens the game.</p><button class="danger-button full" type="submit"><span id="end-submit-label"></span><span aria-hidden="true">→</span></button></form></div>`;
+  applyStyleVars($('#end-content'));
+  const label = () => {
+    const id = $('input[name="winner"]:checked', $('#end-form'))?.value;
+    $('#end-submit-label').textContent = id ? `End game · ${playerById(id).name} wins` : `End game · ${leaderText}`;
+  };
+  label();
+  $('#end-form').addEventListener('change', label);
+  $('#end-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const winnerId = $('input[name="winner"]:checked', $('#end-form'))?.value || undefined;
+    if (await submitAction({ type: 'end-game', ...(winnerId ? { winnerId } : {}) }, 'Game over.')) $('#end-dialog').close();
+  });
+  if (!$('#end-dialog').open) $('#end-dialog').showModal();
 }
 
 function openResults() {
@@ -814,7 +838,7 @@ function renderSoundToggle() {
   button.innerHTML = `<span aria-hidden="true">${feedback.enabled ? '🔊' : '🔇'}</span>Sound &amp; vibration<small>${feedback.enabled ? 'On' : 'Off'}</small>`;
 }
 
-// Header overflow menu (Copy link, Sound, End game).
+// Header overflow menu (Copy link, Sound, Finish game).
 function setMenu(open, { focus = false } = {}) {
   const menu = $('#game-menu');
   menu.hidden = !open;
@@ -976,7 +1000,7 @@ function bindEvents() {
   $('#bankrupt-player').addEventListener('change', renderCreditors);
   $('#ledger-filter').addEventListener('change', renderLedger);
   $('#player-dialog').addEventListener('close', () => { sheet = null; });
-  ['#qr-dialog', '#results-dialog', '#identity-dialog', '#raise-dialog', '#player-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
+  ['#qr-dialog', '#results-dialog', '#end-dialog', '#identity-dialog', '#raise-dialog', '#player-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
     if (event.target === $(selector) || event.target.closest('[data-close-dialog]')) $(selector).close();
   }));
   $('#deed-dialog').addEventListener('click', (event) => { if (event.target === $('#deed-dialog')) $('#deed-dialog').close(); });

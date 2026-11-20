@@ -33,6 +33,15 @@ test('runs a full game over the API: actions, undo, bankruptcy, end game', async
   const afterBankruptcy = await response.json();
   assert.equal(afterBankruptcy.players[0].bankrupt, true);
   assert.equal(afterBankruptcy.standings.at(-1).name, 'Ana');
+  response = await post({ type: 'end-game', winnerId: ana.id });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /Ana is bankrupt/);
+  response = await post({ type: 'end-game', winnerId: ben.id });
+  const chosen = await response.json();
+  assert.equal(chosen.status, 'ended');
+  assert.deepEqual(chosen.winnerIds, [ben.id], 'the table can pick the winner');
+  response = await post({ type: 'undo' });
+  assert.equal((await response.json()).status, 'active');
   response = await post({ type: 'end-game' });
   const ended = await response.json();
   assert.equal(ended.status, 'ended');

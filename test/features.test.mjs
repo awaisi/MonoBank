@@ -265,6 +265,37 @@ test('ending the game declares the highest net worth the winner and freezes play
   assert.throws(() => act(game, { type: 'rent', payerId: ben.id, propertyId: 'boardwalk' }), /game has ended/);
 });
 
+test('the table can finish the game at any time and pick the winner', () => {
+  const game = makeGame();
+  const [ana, ben, cy] = game.players;
+  act(game, { type: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
+  act(game, { type: 'transfer', fromId: ben.id, toId: 'bank', amount: 100 });
+  act(game, { type: 'end-game', winnerId: ben.id });
+  assert.equal(game.status, 'ended');
+  assert.deepEqual(game.winnerIds, [ben.id], 'the chosen player wins even without the highest net worth');
+  assert.equal(game.transactions[0].label, 'Game over: Ben wins');
+  assert.match(game.transactions[0].detail, /^Winner chosen by the table · Net worth · /);
+  act(game, { type: 'undo' });
+  assert.equal(game.status, 'active');
+  assert.deepEqual(game.winnerIds, []);
+  act(game, { type: 'end-game', winnerId: '' });
+  assert.deepEqual(game.winnerIds.sort(), [ana.id, cy.id].sort(), 'an empty choice falls back to net worth');
+  act(game, { type: 'undo' });
+  act(game, { type: 'end-game', winnerId: null });
+  assert.equal(game.winnerIds.length, 2);
+});
+
+test('the chosen winner must be a player still in the game', () => {
+  const game = makeGame();
+  const [ana, ben] = game.players;
+  act(game, { type: 'bankrupt', playerId: ana.id, creditorId: ben.id });
+  const revision = game.revision;
+  assert.throws(() => act(game, { type: 'end-game', winnerId: ana.id }), /Ana is bankrupt and out of the game/);
+  assert.throws(() => act(game, { type: 'end-game', winnerId: 'nobody' }), /Player not found/);
+  assert.equal(game.status, 'active', 'a rejected finish leaves the game running');
+  assert.equal(game.revision, revision);
+});
+
 test('a single winner is named, and undo reopens an ended game', () => {
   const game = makeGame(['Ana', 'Ben']);
   const [ana, ben] = game.players;

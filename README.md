@@ -17,7 +17,7 @@ Live at **https://monobank.divviq.app**.
 - Track who is in jail, and run a Free Parking pot with its own balance and one-tap payout.
 - **Undo** the last action (and keep going back), with undone entries struck through in the activity feed.
 - **Bankruptcy**: hand a player's cash and deeds to their creditor or the Bank; the last player standing wins.
-- **Net worth** in each player's sheet, and an **End game** results screen with final standings.
+- **Net worth** in each player's sheet, and **Finish game** at any time: pick the winner from the players still in (or let net worth decide), then see the final standings.
 - **No overdrafts:** a player can't spend more than they have. MonoBank shows how much is missing and offers to mortgage deeds or sell buildings first, or to declare bankruptcy.
 - **One players bar:** a single compact row of every player's balance stays pinned under the header on every tab. Tap a player for their sheet (net worth, deeds, one-tap quick actions). On **Deeds** the same bar filters deeds by owner.
 - **Per-player quick actions:** Passed GO, Income Tax, Luxury Tax, Jail fee or any amount to or from the Bank, in one tap from the player's sheet.
@@ -28,7 +28,7 @@ Live at **https://monobank.divviq.app**.
 - **Spectator link:** a separate view-only link and QR code for people watching the game; it can't change anything and never reveals the game's edit link.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
-- Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand and the tagline “Unofficial Monopoly® banker”; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **End game**.
+- Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand and the tagline “Unofficial Monopoly® banker”; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **Finish game…**.
 - Games are saved durably and survive restarts and deploys; they expire after 24 hours of inactivity.
 - Built-in abuse protection: per-IP rate limits and a cap on active games.
 
@@ -65,7 +65,7 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ```bash
 npm test           # 116 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # 31 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run e2e        # 32 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available.
@@ -76,7 +76,7 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 - **Bankruptcy:** open the **Bankruptcy** card at the bottom of **Quick pay** and choose the bankrupt player and who they owe. A **What happens** preview spells out the settlement before you confirm (building sale proceeds, cash and deeds handed over, any debt written off, and whether this ends the game). Their houses and hotels are sold to the Bank at half price. Their cash (if positive) and deeds go to the creditor; mortgaged deeds stay mortgaged. If they owe the Bank, deeds return to the Bank unmortgaged. A negative balance is written off. The player leaves the game, and when only one player remains they win automatically.
 - **Net worth:** what a player's holdings are worth to them right now: cash + deeds at list price (a mortgaged deed counts at list price minus what it costs to unmortgage it) + houses and hotels at what the Bank pays back for them (half price). Reversible moves leave it unchanged (build then sell a house, mortgage then unmortgage), and their real costs show up immediately: a $200 house is worth $100, and mortgaging Boardwalk counts the $20 interest owed. It's shown on each player sheet and the results screen.
 - **No negative balances:** every payment (transfers, taxes, Free Parking, rent, purchases and auctions, unmortgaging, houses and hotels, the cash side of a trade) needs the payer to have the money. Paying exactly everything is fine. If they're short, nothing changes and a **Raise cash first** dialog shows the shortfall with one-tap **Sell** (buildings, half price, evenly) and **Mortgage** buttons. Once there's enough, it says to try the payment again. If selling everything still isn't enough, it suggests **Declare bankruptcy**, which opens the bankruptcy card for that player. A hotel can never be bought on credit. Games saved before this rule may still show a negative balance; it's written off on bankruptcy.
-- **End game:** **⋯ → End game** in the header declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
+- **Finish game:** **⋯ → Finish game…** ends the game at any point, so you don't have to play until everyone else is bankrupt. Choose **Highest net worth** (ties are shared) or tap any player still in the game to name them the winner. Bankrupt players can't be picked, and the confirm button names the winner. It then opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
 
 ## Joining and feedback
 
@@ -251,7 +251,7 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
   | `collect-parking` | `playerId` | Pays out the pot and reseeds it; jackpot rule only |
   | `jail` | `playerId`, `inJail` (boolean) | Records a player entering or leaving jail |
   | `bankrupt` | `playerId`, `creditorId?` (player ID or `bank`, default `bank`) | Liquidates buildings, hands over cash and deeds, removes the player; ends the game if one player remains |
-  | `end-game` | — | Ends the game; highest net worth wins |
+  | `end-game` | `winnerId` (optional) | Ends the game at any time. Without `winnerId` the highest net worth wins (ties share); with it, that player (who must not be bankrupt) wins |
   | `undo` | — | Reverses the most recent action (repeatable, last 50) |
 
   Every action except `undo` is rejected once the game has ended, and any action naming a bankrupt player is rejected.
