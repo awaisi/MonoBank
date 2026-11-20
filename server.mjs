@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GameError, performAction, publicGame, spectatorView } from './lib/game.mjs';
+import { GameError, performAction, publicGame, spectatorView, ledgerPage, ledgerCsv } from './lib/game.mjs';
 import { GameStore } from './lib/store.mjs';
 import { RateLimiter } from './lib/rate-limit.mjs';
 import { GameStreams } from './lib/streams.mjs';
@@ -30,6 +30,14 @@ const securityHeaders = {
 function sendJson(res, status, value, headers = {}) {
   res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', ...headers });
   res.end(JSON.stringify(value));
+}
+
+function sendCsv(res, game) {
+  res.writeHead(200, {
+    ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex',
+    'Content-Disposition': `attachment; filename="monobank-activity-${new Date().toISOString().slice(0, 10)}.csv"`
+  });
+  res.end(ledgerCsv(game));
 }
 
 async function readJson(req) {
@@ -80,12 +88,14 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         const game = await store.create(await readJson(req));
         return sendJson(res, 201, publicGame(game));
       }
-      const match = url.pathname.match(/^\/api\/games\/([a-f0-9]{16})(\/actions|\/events)?$/);
+      const match = url.pathname.match(/^\/api\/games\/([a-f0-9]{16})(\/actions|\/events|\/transactions|\/activity\.csv)?$/);
       if (match) {
         const game = await store.get(match[1]);
         const [, , sub] = match;
         if (req.method === 'GET' && !sub) return sendJson(res, 200, publicGame(game));
         if (req.method === 'GET' && sub === '/events') return streams.open(req, res, game, publicGame);
+        if (req.method === 'GET' && sub === '/transactions') return sendJson(res, 200, ledgerPage(game, url.searchParams.get('before'), url.searchParams.get('limit') ?? undefined));
+        if (req.method === 'GET' && sub === '/activity.csv') return sendCsv(res, game);
         if (req.method === 'POST' && sub === '/actions') {
           performAction(game, await readJson(req));
           await store.save(game);
@@ -93,10 +103,13 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
           return sendJson(res, 200, publicGame(game));
         }
       }
-      const watch = url.pathname.match(/^\/api\/watch\/([a-f0-9]{16})(\/events)?$/);
+      // Spectator routes are read-only: there is no write route under /api/watch/.
+      const watch = url.pathname.match(/^\/api\/watch\/([a-f0-9]{16})(\/events|\/transactions|\/activity\.csv)?$/);
       if (watch && req.method === 'GET') {
         const game = await store.getByWatchToken(watch[1]);
-        if (watch[2]) return streams.open(req, res, game, spectatorView);
+        if (watch[2] === '/events') return streams.open(req, res, game, spectatorView);
+        if (watch[2] === '/transactions') return sendJson(res, 200, ledgerPage(game, url.searchParams.get('before'), url.searchParams.get('limit') ?? undefined));
+        if (watch[2] === '/activity.csv') return sendCsv(res, game);
         return sendJson(res, 200, spectatorView(game));
       }
       if (url.pathname.startsWith('/api/')) throw new GameError('Not found.', 404);

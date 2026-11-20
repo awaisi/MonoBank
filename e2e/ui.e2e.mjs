@@ -8,13 +8,15 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createAppServer } from '../server.mjs';
 import { GameStore } from '../lib/store.mjs';
+import { performAction } from '../lib/game.mjs';
 
 const require = createRequire(import.meta.url);
 let chromium;
 try { ({ chromium } = require('playwright')); } catch { /* reported below */ }
 
 test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installed' }, async (t) => {
-  const server = createAppServer({ store: new GameStore() });
+  const store = new GameStore();
+  const server = createAppServer({ store });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch();
@@ -278,9 +280,15 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.deepEqual(options, ['Everyone', 'Ana (you)', 'Ben', 'Cy', 'The Bank']);
     const everyone = await page.$$eval('#full-ledger .ledger-item', (items) => items.length);
     await page.selectOption('#ledger-filter', { label: 'Cy' });
+    // Cy's quick actions were all undone earlier; undone entries are hidden until asked for.
+    assert.match(await page.textContent('#ledger-undone'), /^Show \d+ undone$/);
+    await page.click('#ledger-undone');
+    assert.equal(await page.getAttribute('#ledger-undone', 'aria-pressed'), 'true');
     const cyLabels = await page.$$eval('#full-ledger .ledger-item strong', (items) => items.map((item) => item.textContent));
-    assert.ok(cyLabels.length > 0 && cyLabels.length < everyone && cyLabels.every((label) => label.includes('Cy')), cyLabels.join(' | '));
+    assert.ok(cyLabels.length > 0 && cyLabels.every((label) => label.includes('Cy')), cyLabels.join(' | '));
     assert.match(await page.textContent('#full-ledger'), /Passed GO/, 'quick actions show up as ordinary transfers');
+    await page.click('#ledger-undone');
+    assert.equal(await page.getAttribute('#ledger-undone', 'aria-pressed'), 'false', 'undone entries hide again');
     await page.selectOption('#ledger-filter', { label: 'Ana (you)' });
     const anaLabels = await page.$$eval('#full-ledger .ledger-item strong', (items) => items.map((item) => item.textContent));
     assert.ok(anaLabels.length > 0 && anaLabels.length < everyone);
@@ -441,7 +449,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.waitForSelector('#results-dialog[open]');
     assert.equal(await page.isVisible('#end-dialog'), false);
     assert.match(await page.textContent('#results-title'), /Ben wins/);
-    assert.match(await page.textContent('#results-content .muted'), /^Played (under a minute|\d+ minutes?) \(.+–.+\) · \d+ transactions/, 'play time runs from the first to the last move');
+    assert.match(await page.textContent('#results-content .muted'), /^Played (under a minute|\d+ minutes?) \(.+–.+\) · \d+ moves?/, 'play time runs from the first to the last move');
     assert.match(await page.textContent('#ended-text'), /Game over: Ben wins/);
     await page.click('[data-undo-results]');
     await page.waitForSelector('#ended-banner', { state: 'hidden' });
@@ -524,6 +532,82 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
       await phone.close();
     }
     await big.close();
+  });
+
+  await t.test('activity page handles a long game: timeline, filters, player view, paging, export', async () => {
+    const long = await store.create({ players: ['Ana', 'Ben', 'Cy'], rules: { freeParkingJackpot: true } });
+    const [ana, ben, cy] = long.players;
+    const act = (action) => performAction(long, action);
+    act({ type: 'buy', playerId: ana.id, propertyId: 'boardwalk' });
+    act({ type: 'buy', playerId: ben.id, propertyId: 'park-place' });
+    for (let i = 0; i < 180; i += 1) {
+      const kind = i % 4;
+      if (kind === 0) act({ type: 'transfer', fromId: 'bank', toId: [ana, ben, cy][i % 3].id, amount: 200, note: 'Passed GO' });
+      if (kind === 1) act({ type: 'rent', payerId: cy.id, propertyId: i % 8 === 1 ? 'boardwalk' : 'park-place' });
+      if (kind === 2) act({ type: 'transfer', fromId: [ana, ben, cy][i % 3].id, toId: 'parking', amount: 10, note: 'Luxury Tax', category: 'tax' });
+      if (kind === 3) act({ type: 'transfer', fromId: 'bank', toId: cy.id, amount: 60, note: 'Card' });
+    }
+    act({ type: 'transfer', fromId: ana.id, toId: ben.id, amount: 1, note: 'Oops' });
+    act({ type: 'undo' });
+    await store.save(long);
+    const total = long.transactions.length;
+    const viewer = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const viewerErrors = [];
+    viewer.on('console', (message) => { if (message.type() === 'error') viewerErrors.push(message.text()); });
+    await viewer.goto(`${base}/game/${long.id}`);
+    await viewer.click('#identity-options [data-identity="banker"]');
+    await viewer.click('.view-tabs [data-view="ledger"]');
+    // Desktop: the sidebar shows the summary instead of repeating the list.
+    assert.equal(await viewer.isVisible('#side-summary'), true);
+    assert.equal(await viewer.isVisible('#mini-ledger'), false);
+    assert.equal(await viewer.isVisible('#ledger-summary'), false);
+    assert.match(await viewer.textContent('#side-summary'), /Game so far.*Moves182.*Top rent earner/);
+    await viewer.click('.view-tabs [data-view="pay"]');
+    assert.equal(await viewer.isVisible('#mini-ledger'), true);
+    await viewer.click('.view-tabs [data-view="ledger"]');
+    // Timeline: 15-minute blocks, 50 rows at a time, undone entries hidden.
+    assert.ok(await viewer.$$eval('.ledger-group-head', (heads) => heads.length) >= 1);
+    assert.match(await viewer.textContent('.ledger-group-head small'), /^\d+ moves?$/);
+    assert.equal(await viewer.$$eval('#full-ledger .ledger-item', (rows) => rows.length), 50);
+    assert.equal(await viewer.$$eval('#full-ledger .ledger-item.undone, #full-ledger .is-undo', (rows) => rows.length), 0);
+    assert.equal(await viewer.textContent('#ledger-undone'), 'Show 2 undone');
+    assert.match(await viewer.textContent('#ledger-note'), /^Showing 50 of \d+\+ entries\.$/);
+    while (await viewer.isVisible('#ledger-more')) await viewer.click('#ledger-more');
+    assert.equal(await viewer.$$eval('#full-ledger .ledger-item', (rows) => rows.length), total - 2, 'paging reaches the start, beyond what the server sends up front');
+    assert.match(await viewer.textContent('#full-ledger .ledger-item:last-child'), /Bank opened/);
+    // Type chips and search combine.
+    await viewer.click('[data-ledger-type="rent"]');
+    assert.equal(await viewer.getAttribute('[data-ledger-type="rent"]', 'aria-pressed'), 'true');
+    const rentRows = await viewer.$$eval('#full-ledger .ledger-item small', (rows) => rows.map((row) => row.textContent));
+    assert.ok(rentRows.length === 45 && rentRows.every((row) => row.startsWith('Rent')), rentRows.length);
+    await viewer.fill('#ledger-search', 'boardwalk');
+    const boardwalkRows = await viewer.$$eval('#full-ledger .ledger-item small', (rows) => rows.map((row) => row.textContent));
+    assert.ok(boardwalkRows.length > 0 && boardwalkRows.length < 45 && boardwalkRows.every((row) => row === 'Rent · Boardwalk'), boardwalkRows.join('|'));
+    await viewer.fill('#ledger-search', 'no such deed');
+    assert.equal(await viewer.textContent('#full-ledger .empty-state'), 'No moves match.');
+    await viewer.fill('#ledger-search', '');
+    await viewer.click('[data-ledger-type="all"]');
+    // Player view: signed amounts, balance after each move, and that player's totals.
+    await viewer.selectOption('#ledger-filter', { label: 'Cy' });
+    assert.match(await viewer.textContent('#side-summary'), /Cy’s game.*Money in\+\$[\d,]+.*Money out−\$[\d,]+.*Rent paid\$[\d,]+.*Passed GO15×/);
+    const amounts = await viewer.$$eval('#full-ledger .ledger-amount b', (cells) => cells.map((cell) => `${cell.className}:${cell.textContent}`));
+    assert.ok(amounts.slice(0, 10).every((cell) => /^(in:\+|out:−)\$/.test(cell)), amounts.slice(0, 10).join(' '));
+    const cy0 = long.transactions.find((entry) => !entry.undone && entry.type !== 'undo' && entry.deltas?.[2]);
+    assert.match(await viewer.textContent('#full-ledger .ledger-item small'), new RegExp(`balance \\$${cy0.balances[2].toLocaleString('en-US').replace(',', ',')}$`));
+    await viewer.selectOption('#ledger-filter', { label: 'The Bank' });
+    assert.match(await viewer.textContent('#full-ledger .ledger-amount b'), /^[+−]\$/);
+    await viewer.selectOption('#ledger-filter', 'all');
+    // Export: the menu and the CSV it links to.
+    assert.equal(await viewer.getAttribute('#export-activity', 'href'), `/api/games/${long.id}/activity.csv`);
+    const csv = await viewer.evaluate(async (href) => (await fetch(href)).text(), await viewer.getAttribute('#export-activity', 'href'));
+    assert.equal(csv.trimEnd().split('\r\n').length, total + 1);
+    assert.match(csv, /^"Time","Type","What happened"/);
+    // Phone: the summary sits above the list (no sidebar) and nothing scrolls sideways.
+    await viewer.setViewportSize({ width: 375, height: 740 });
+    assert.equal(await viewer.isVisible('#ledger-summary'), true);
+    assert.equal(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.deepEqual(viewerErrors, []);
+    await viewer.close();
   });
 
   await t.test('logs no console or CSP errors', () => {

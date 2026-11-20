@@ -26,6 +26,7 @@ Priorities:
 | **No negative balances + Raise cash dialog** | PR #11 | Every debit checks the payer's cash; shortfall, raisable amount, Sell/Mortgage buttons and a bankruptcy shortcut. Hotels can't be bought on credit. |
 | **Net worth as equity** | PR #11 | Mortgaged deeds net of payoff, buildings at resale; reversible moves net to zero (was purchase price, which hid resale losses and interest). |
 | **Balance strip, activity filter, deed owner pills, Pay rent wording, your name first** | PR #11 | Balances pinned on every tab; Activity filter by player or Bank; Deeds owner pills with counts; "Who pays rent? → Pay rent to …"; this phone's player first in all lists. |
+| **Activity page for long games** | PR #17 | Full history (2,000 entries, paged to phones 150 at a time) instead of a silent 300 cap; 15-minute timeline with clock times; compact rows; type chips and search; per-player signed amounts and balance after each move (server balance stamps); player and "Game so far" summaries (server `activity` stats, also used by the results screen); undone entries hidden by default; Show earlier paging; sidebar summary on desktop; CSV export. |
 | **Play time from first to last move** | PR #16 | Results show how long the table actually played (first move to the last move before Finish game, with clock times), not creation-to-Finish, so setting up early or closing late doesn't inflate it. |
 | **Bigger player tiles; scrolling fixes** | PR #15 | Tiles show balance, net worth, deed count, You badge and status, and scroll with the page instead of a pinned translucent bar. The row keeps its sideways position on live updates, keeps the same height on every tab, and the header respects the iPhone safe area. |
 | **Finish game at any time, choose the winner** | PR #14 | ⋯ → Finish game… opens a winner picker (Highest net worth, or any player still in); `end-game` takes an optional `winnerId`; undoable. |
@@ -69,7 +70,7 @@ All P0 items have shipped (#1 and #3 in PR #7). New P0s go here.
 | 18 | **Custom deed sets** | Other city boards, themed and homemade editions. | M | Load deed data from JSON per game; validate; never ship trademarked edition content. |
 | 19 | **Currency and number formats** | £, €, M, "1.5M" styles. | S | Per-game currency setting; `Intl.NumberFormat`. |
 | 20 | **Virtual dice** | Several competitors include them; low effort, mildly useful. | S | Client-only, with an optional ledger note. |
-| 21 | **Charts and game stats** | Balance over time, most rent paid, best deed. | M | Derive from the ledger; extend the results dialog. |
+| 21 | **Charts and game stats** | Balance over time, most rent paid, best deed. | M | Balance stamps (`balances` per entry) and `activity` stats now exist; chart them in the results dialog and the player sheet. |
 | 22 | **Installable offline app** | The manifest already exists; it needs a service worker. | S | Cache the app shell only; actions still need the server. |
 | 23 | **Dark mode** | Useful for evening play. | S | Colors are already CSS variables; add `prefers-color-scheme` and a toggle. |
 | 25 | **Other languages** | Wider audience. | M | String table; `lang` attribute; probably needs approval for any i18n dependency. |
