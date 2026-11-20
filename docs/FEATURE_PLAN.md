@@ -23,6 +23,7 @@ Priorities:
 | **Sound & haptics** (#24) | PR #5 | Chime + vibration on payments (local and from other devices); per-device toggle. |
 | **Durable game storage** (#1) | PR #7 | Azure Files share mounted at `/data`; one JSON file per game written atomically after every action; games and undo history survive restarts and deploys; the deploy verifies a probe game survives. |
 | **Abuse limits** (#3) | PR #7 | 20 new games/hour and 600 API requests/minute per IP (429 + `Retry-After`), 5,000 active-game cap (503), `TRUST_PROXY` for `X-Forwarded-For`. |
+| **5–8 players** (#11) | PR #10 | Up to 8 players with distinct colors and generic tokens; denser player grid and two-column identity picker for big tables; setup shows "N of 8 players". |
 | **"This phone is me" mode** (#13) | PR #9 | Per-device player or banker choice (localStorage); me-bar, You badge, pre-filled forms, My deeds filter, Switch player. |
 | **Instant updates** (#16) | PR #9 | Server-sent events per game with heartbeat and caps; polling fallback (3.5 s down / 30 s safety net); amber dot while reconnecting. |
 | **Spectator link** (#17) | PR #9 | Separate `viewToken`; `/watch/<token>` read-only live view; no write routes; Invite dialog players/spectators toggle. "Banker-only" is covered by #13's banker choice. |
@@ -45,7 +46,6 @@ All P0 items have shipped (#1 and #3 in PR #7). New P0s go here.
 | 7 | **Card helpers** | General repairs ($ per house/hotel), double railroad rent, 10× utility from a card. | S | Repairs computed from the player's buildings; rent modifiers as options on the rent action. |
 | 9 | **Mortgaged-deed transfer interest** | Official rule: receiving a mortgaged deed costs 10% right away (or the full unmortgage cost). | S | Apply in trades and bankruptcy-to-player; respect the mortgage-interest house rule; prompt for "pay interest now" vs "unmortgage now". |
 | 10 | **Per-player quick actions** | Tap a player card for "Passed GO", "Pay tax" and so on. Saves two dropdowns on every turn. | S | Menu on each player card; uses the existing transfer action. |
-| 11 | **5–8 players** | The classic game supports up to 8 players. | S | More colors/tokens; responsive player ribbon; update validation, tests and setup copy. |
 
 ### P2: multi-device and social
 

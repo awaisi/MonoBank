@@ -8,7 +8,7 @@ Live at **https://monobank.divviq.app**.
 
 ## Highlights
 
-- Start a shared game for 2–4 players with a unique URL.
+- Start a shared game for **2–8 players** with a unique URL; each seat gets its own color and token.
 - Move money between players and the Bank, with GO, jail, and tax shortcuts.
 - Manage all 28 classic U.S. deeds, including purchase and auction prices.
 - Calculate street, complete-color-set, railroad, and utility rent automatically.

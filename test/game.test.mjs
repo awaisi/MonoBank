@@ -6,7 +6,7 @@ import { createAppServer } from '../server.mjs';
 
 const makeGame = () => createGame({ players: ['Awais', 'Friend'], startingBalance: 1500 });
 
-test('creates a game for 2–4 unique players', () => {
+test('creates a game for 2–8 unique players', () => {
   const game = makeGame();
   assert.match(game.id, /^[a-f0-9]{16}$/);
   assert.equal(game.players.length, 2);
