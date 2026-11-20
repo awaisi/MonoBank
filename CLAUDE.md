@@ -120,7 +120,7 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 
 A feature or behavior change is not done until, **in the same PR**:
 
-1. **`README.md`**: highlights, the relevant feature section, house rules table, API actions table, testing or deployment notes.
+1. **`README.md`**: highlights, the **"How to use" walkthrough** (keep it a short, current step-by-step game night: add, change or remove the step for any user-facing feature or renamed control, with the button names as they appear in the app), the relevant feature section, house rules table, API actions table, testing or deployment notes.
 2. **`docs/FEATURE_PLAN.md`**: move the item to *Shipped* (with PR number), and add or reprioritize anything new that was discovered.
 3. **`CLAUDE.md`** (this file): architecture table, game-model invariants, commands, conventions.
 4. **In-app copy** in `public/index.html` (setup text, feature strip, help text) and any user-facing strings in `public/app.js`.

@@ -34,6 +34,28 @@ Live at **https://monobank.divviq.app**.
 - Games are saved durably and survive restarts and deploys. A paused game is kept for **30 days** after its last move (a finished one for 7 days), so you can pick up next weekend.
 - Built-in abuse protection: per-IP rate limits and a cap on active games.
 
+## How to use
+
+A game night with MonoBank, start to finish. Everyone still plays on the physical board; MonoBank replaces the paper money and the deed cards' bookkeeping.
+
+1. **Open the bank.** Go to [monobank.divviq.app](https://monobank.divviq.app), add 2–8 players and the starting cash. Open **House rules** to pick any your table plays: Free Parking jackpot, $400 for landing on GO, no rent in jail, auctions, even building, mortgage interest, and **Show everyone's money** (off by default, so each phone sees only its own player's money). Tap **Open the bank**.
+2. **Bring everyone in.** Tap **Invite** to show a QR code, or use **⋯ → Copy game link**, and everyone opens the same game on their phone. For people who are only watching (or a TV), switch the Invite card to **Spectators**: that link is view-only.
+3. **Say who's on each phone.** Each phone picks its player (or **I'm the banker**). That phone's tile comes first, forms are pre-filled with that player, and it sees that player's money. Change it any time with **Switch** or **⋯ → Switch player…**. Anyone can still bank for anyone.
+4. **Play.**
+   - **Pay someone:** **Pay** tab: choose *From*, *To* and the amount, or use a preset (GO, Jail, Tax, Luxury). With the jackpot rule, taxes and fees go to the Free Parking pot.
+   - **One-tap payments:** tap a player's tile for their sheet: **Passed GO**, **Income Tax**, **Luxury Tax**, **Jail fee**, or any amount to or from the Bank.
+   - **Buy a deed:** **Deeds** tab: tap the deed, choose the buyer and the price (or an auction price, if auctions are on), and tap **Acquire deed**.
+   - **Collect rent:** tap an owned deed, choose **Who pays rent?** and tap **Pay rent to …** (the owner's name). MonoBank works out the amount (sets, houses, hotels, railroads, and utilities from the dice total).
+   - **Build, sell, mortgage:** in the same deed dialog: **＋** to add a house or hotel, **− Sell building**, **Mortgage** and **Unmortgage**. Houses go on full color sets, evenly unless the table turned that rule off.
+   - **Trade:** **Trade** tab: pick two players, the deeds and any cash each side gives, and confirm.
+   - **Not enough cash?** MonoBank won't let a balance go negative. It shows how much is missing and offers to sell buildings or mortgage deeds right there.
+   - **Jail and Free Parking:** with those house rules, the player sheet has **Send to jail / Release**, and tapping the Free Parking tile lets you **Collect** the pot for whoever landed there.
+   - **Made a mistake?** Tap **↶ Undo**. It works for every kind of move, and you can keep going back.
+5. **Keep track.** The player tiles at the top show balances (your own, or everyone's with open balances), net worth and deed counts. **Deeds → Sets** shows who owns each color set and who is one deed away. **Activity** lists every move in time order, with filters by player and type, search, and **⋯ → Download activity (CSV)**.
+6. **When someone can't pay.** In the **Pay** tab, open **Bankruptcy**: it previews exactly what happens (buildings sold, cash and deeds to the creditor or back to the Bank) before you confirm. The last player standing wins automatically.
+7. **Finish whenever you like.** **⋯ → Finish game…** ends the game: let the highest net worth win, or pick the winner from the players still in. The results screen shows the final standings, how long you played and every player's money. **Undo** reopens the game if you finished by mistake.
+8. **Pause and come back.** Just close the app. Reopen the same game link (or scan the QR again) any time within 30 days of the last move; finished games stay available for 7 days.
+
 ## Run locally
 
 Requires Node.js 22 or newer. There are no runtime dependencies.
