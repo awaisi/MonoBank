@@ -28,7 +28,7 @@
           <h1>Your game.<br><em>One shared bank.</em></h1>
           <p>Replace paper cash with a fast, shared companion built for the table—not the spreadsheet.</p>
           <div class="feature-strip" aria-label="Features">
-            <span>⚡ Instant transfers</span><span>⌂ Deed manager</span><span>↗ Shareable game link</span>
+            <span>⚡ Instant transfers</span><span>⌂ Deed manager</span><span>↗ Shareable game link</span><span>⚙ House rules</span>
           </div>
           <div class="table-art" aria-hidden="true">
             <div class="board-card card-a"><span></span><b>BOARDWALK</b><small>$400</small></div>
@@ -41,11 +41,23 @@
         <div class="setup-card">
           <div class="step-chip">NEW GAME</div>
           <h2>Who’s at the table?</h2>
-          <p class="muted">Add 2–4 players. Everyone starts with the same balance.</p>
+          <p class="muted">Add 2–4 players. Everyone starts with the same balance. Open <strong>House rules</strong> if your table plays with any.</p>
           <form id="setup-form" novalidate>
             <div id="player-inputs" class="player-inputs"></div>
             <button type="button" class="text-button" id="add-player">＋ Add another player</button>
             <label class="field money-field"><span>Starting balance</span><div><span aria-hidden="true">$</span><input id="starting-balance" name="startingBalance" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="1500" required></div></label>
+            <details class="house-rules">
+              <summary><span>House rules</span><small id="setup-rules-summary">Classic rules</small></summary>
+              <div class="rules-list">
+                <label class="rule-toggle"><input type="checkbox" id="rule-free-parking"><span><strong>Free Parking jackpot</strong><small>Taxes and fees go into a pot. Whoever lands on Free Parking collects it.</small></span></label>
+                <label class="field money-field rule-sub" id="rule-seed-field" hidden><span>Seed the pot with</span><div><span aria-hidden="true">$</span><input id="rule-free-parking-seed" type="number" inputmode="numeric" min="0" max="100000" step="1" value="0"></div></label>
+                <label class="rule-toggle"><input type="checkbox" id="rule-double-go"><span><strong>$400 for landing on GO</strong><small>Adds a “Land on GO” button that pays double salary.</small></span></label>
+                <label class="rule-toggle"><input type="checkbox" id="rule-no-rent-jail"><span><strong>No rent while in jail</strong><small>Players in jail can’t collect rent until they’re released.</small></span></label>
+                <label class="rule-toggle"><input type="checkbox" id="rule-auctions" checked><span><strong>Auctions</strong><small>Turn off to sell unbought deeds only at their list price.</small></span></label>
+                <label class="rule-toggle"><input type="checkbox" id="rule-even-building" checked><span><strong>Even building</strong><small>Turn off to let players build and sell unevenly across a color set.</small></span></label>
+                <label class="field rule-number"><span>Mortgage interest</span><div><input id="rule-mortgage-interest" type="number" inputmode="numeric" min="0" max="100" step="1" value="10"><span aria-hidden="true">%</span></div></label>
+              </div>
+            </details>
             <p class="form-error" id="setup-error" role="alert"></p>
             <button class="primary-button full" type="submit"><span>OPEN THE BANK</span><span aria-hidden="true">→</span></button>
           </form>
@@ -55,7 +67,7 @@
 
       <section id="game-screen" class="game-layout" hidden>
         <div class="game-head">
-          <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1></div>
+          <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1><p class="rules-line" id="rules-line"></p></div>
           <button class="share-button" id="share-game" type="button">↗ <span>Share game</span></button>
         </div>
 
@@ -83,6 +95,7 @@
                 </div>
                 <div class="preset-row" aria-label="Common payments">
                   <button type="button" data-preset="200" data-note="Passed GO">GO +$200</button>
+                  <button type="button" data-preset="400" data-note="Landed on GO" id="preset-land-go" hidden>Land on GO +$400</button>
                   <button type="button" data-preset="50" data-note="Jail fee">Jail $50</button>
                   <button type="button" data-preset="200" data-note="Income Tax">Tax $200</button>
                   <button type="button" data-preset="100" data-note="Luxury Tax">Luxury $100</button>
