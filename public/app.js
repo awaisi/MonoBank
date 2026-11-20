@@ -4,7 +4,10 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const GROUP_COLORS = { brown:'#8b5a3c',lightblue:'#9ad8e8',pink:'#d65aa3',orange:'#ef8b35',red:'#d94345',yellow:'#f0ca3e',green:'#31966f',darkblue:'#3158a6',railroad:'#34414a',utility:'#87939a' };
-const TOKEN_LABELS = ['M','R','T','♟'];
+const TOKEN_LABELS = ['M','R','T','♟','★','◆','♣','♥'];
+// Mirrors lib/game.mjs (MAX_PLAYERS and seat colors) for the setup form.
+const MAX_PLAYERS = 8;
+const PLAYER_COLORS = ['#d9574f', '#3c8fd1', '#d6a53c', '#45a477', '#8a5cc7', '#e07b39', '#2a9d9b', '#d1588e'];
 let game = null;
 let activeView = 'pay';
 let pollTimer;
@@ -146,7 +149,7 @@ function setBusy(form, busy) {
 
 function addPlayerInput(name = '') {
   const container = $('#player-inputs');
-  if (container.children.length >= 4) return;
+  if (container.children.length >= MAX_PLAYERS) return;
   const index = container.children.length;
   const field = document.createElement('div');
   field.className = 'player-field';
@@ -163,14 +166,16 @@ function addPlayerInput(name = '') {
 function normalizePlayerInputs() {
   $$('.player-field', $('#player-inputs')).forEach((field, index) => {
     $('.token', field).textContent = TOKEN_LABELS[index];
-    $('.token', field).style.background = ['#d9574f','#3c8fd1','#d6a53c','#45a477'][index];
+    $('.token', field).style.background = PLAYER_COLORS[index];
     const input = $('input', field);
     input.id = `player-${index}`;
     input.placeholder = `Player ${index + 1}`;
     $('label', field).htmlFor = input.id;
     $('.remove-player', field).ariaLabel = `Remove player ${index + 1}`;
   });
-  $('#add-player').hidden = $('#player-inputs').children.length >= 4;
+  const count = $('#player-inputs').children.length;
+  $('#add-player').hidden = count >= MAX_PLAYERS;
+  $('#player-count').textContent = `${count} of ${MAX_PLAYERS} players`;
 }
 
 async function createGame(event) {
@@ -347,6 +352,7 @@ function openIdentity() {
   });
   options.push(`<button type="button" class="identity-option banker ${me === 'banker' ? 'current' : ''}" data-identity="banker"><span class="mini-token">$</span><span><strong>I’m the banker</strong><small>Not playing · see everyone equally</small></span></button>`);
   $('#identity-options').innerHTML = options.join('');
+  $('#identity-options').classList.toggle('many', options.length > 5);
   applyStyleVars($('#identity-options'));
   $$('[data-identity]', $('#identity-options')).forEach((button) => button.addEventListener('click', () => chooseIdentity(button.dataset.identity)));
   if (!$('#identity-dialog').open) $('#identity-dialog').showModal();
@@ -397,6 +403,7 @@ function renderPlayers() {
     cards.push(`<article class="player-card parking-card" data-vars="--player-color=#d6b661"><div class="player-card-head"><span class="mini-token">P</span><strong>Free Parking</strong></div><div class="balance">${money.format(game.freeParking || 0)}</div><form class="parking-form" id="parking-form"><label class="sr-only" for="parking-winner">Who landed on Free Parking?</label><select id="parking-winner">${optionList()}</select><button type="submit" ${game.freeParking ? '' : 'disabled'}>Collect</button></form></article>`);
   }
   $('#player-cards').innerHTML = cards.join('');
+  $('#player-cards').classList.toggle('crowded', game.players.length > 4);
   applyStyleVars($('#player-cards'));
   $$('[data-jail-player]').forEach((button) => button.addEventListener('click', () => {
     const target = playerById(button.dataset.jailPlayer);

@@ -27,8 +27,8 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon.svg">
-  <link rel="stylesheet" href="/styles.css?v=5">
-  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "MonoBank", "alternateName": "MonoBank – Unofficial Monopoly Banker", "url": "https://monobank.divviq.app/", "description": "Free, unofficial digital banker for Monopoly game night. One shared bank on every phone: pay rent, buy deeds, trade and track every transaction. No download or sign-up.", "applicationCategory": "GameApplication", "operatingSystem": "Any (web browser)", "browserRequirements": "Requires JavaScript and a modern web browser.", "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "image": "https://monobank.divviq.app/og-image.jpg", "featureList": ["Shared live bank for 2–4 players", "Rent calculation", "Deeds, mortgages, houses and hotels", "Trades", "House rules", "Undo", "Bankruptcy and net worth", "QR code to join"], "disambiguatingDescription": "MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc."}</script>
+  <link rel="stylesheet" href="/styles.css?v=6">
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "MonoBank", "alternateName": "MonoBank – Unofficial Monopoly Banker", "url": "https://monobank.divviq.app/", "description": "Free, unofficial digital banker for Monopoly game night. One shared bank on every phone: pay rent, buy deeds, trade and track every transaction. No download or sign-up.", "applicationCategory": "GameApplication", "operatingSystem": "Any (web browser)", "browserRequirements": "Requires JavaScript and a modern web browser.", "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "image": "https://monobank.divviq.app/og-image.jpg", "featureList": ["Shared live bank for 2–8 players", "Rent calculation", "Deeds, mortgages, houses and hotels", "Trades", "House rules", "Undo", "Bankruptcy and net worth", "QR code to join"], "disambiguatingDescription": "MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc."}</script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -74,10 +74,10 @@
         <div class="setup-card">
           <div class="step-chip">NEW GAME</div>
           <h2>Who’s at the table?</h2>
-          <p class="muted">Add 2–4 players. Everyone starts with the same balance. Open <strong>House rules</strong> if your table plays with any.</p>
+          <p class="muted">Add 2–8 players. Everyone starts with the same balance. Open <strong>House rules</strong> if your table plays with any.</p>
           <form id="setup-form" novalidate>
             <div id="player-inputs" class="player-inputs"></div>
-            <button type="button" class="text-button" id="add-player">＋ Add another player</button>
+            <div class="player-add-row"><button type="button" class="text-button" id="add-player">＋ Add another player</button><span class="player-count" id="player-count" aria-live="polite"></span></div>
             <label class="field money-field"><span>Starting balance</span><div><span aria-hidden="true">$</span><input id="starting-balance" name="startingBalance" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="1500" required></div></label>
             <details class="house-rules">
               <summary><span>House rules</span><small id="setup-rules-summary">Classic rules</small></summary>
@@ -214,6 +214,6 @@
   <dialog id="results-dialog" class="deed-dialog" aria-labelledby="results-title"><div id="results-content"></div></dialog>
   <dialog id="identity-dialog" class="deed-dialog" aria-labelledby="identity-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">THIS PHONE</p><h2 id="identity-title">Who’s playing on this phone?</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><p class="muted">Pick yourself to see your balance first and have your name filled in. Everyone can still bank for anyone.</p><div id="identity-options" class="identity-options"></div></div></dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/app.js?v=5"></script>
+  <script type="module" src="/app.js?v=6"></script>
 </body>
 </html>

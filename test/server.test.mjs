@@ -66,7 +66,12 @@ test('rejects invalid JSON, oversized bodies and invalid games', async (t) => {
   assert.equal(huge.status, 413);
   const tooFew = await json('/api/games', { players: ['Solo'] });
   assert.equal(tooFew.status, 400);
-  assert.match((await tooFew.json()).error, /between 2 and 4/);
+  assert.match((await tooFew.json()).error, /between 2 and 8/);
+  const eight = await json('/api/games', { players: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] });
+  assert.equal(eight.status, 201);
+  assert.equal((await eight.json()).players.length, 8);
+  const nine = await json('/api/games', { players: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] });
+  assert.equal(nine.status, 400);
 });
 
 test('hides internal errors behind a generic 500', async (t) => {

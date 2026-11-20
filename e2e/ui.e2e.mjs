@@ -285,6 +285,45 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await phone.close();
   });
 
+  await t.test('supports a full table of 8 players', async () => {
+    const big = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    big.on('pageerror', (error) => errors.push(error.message));
+    big.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+    await big.goto(base);
+    assert.equal(await big.textContent('#player-count'), '2 of 8 players');
+    for (let i = 0; i < 6; i++) await big.click('#add-player');
+    assert.equal(await big.textContent('#player-count'), '8 of 8 players');
+    assert.equal(await big.isVisible('#add-player'), false, 'cannot add a ninth player');
+    await big.click('.player-field:last-child .remove-player');
+    assert.equal(await big.isVisible('#add-player'), true);
+    await big.click('#add-player');
+    const names = ['Ana', 'Ben', 'Cy', 'Di', 'Eve', 'Fay', 'Gus', 'Hal'];
+    for (const [index, name] of names.entries()) await big.fill(`#player-${index}`, name);
+    const setupColors = await big.$$eval('.player-field .token', (tokens) => tokens.map((token) => getComputedStyle(token).backgroundColor));
+    assert.equal(new Set(setupColors).size, 8, 'each seat has its own color');
+    await big.click('#setup-form button[type=submit]');
+    await big.waitForSelector('#identity-dialog[open]');
+    assert.equal(await big.$$eval('#identity-options [data-identity]', (options) => options.length), 9);
+    assert.equal(await big.$eval('#identity-options', (list) => list.classList.contains('many')), true, 'two-column picker');
+    await big.click('#identity-options [data-identity="banker"]');
+    assert.equal(await big.$$eval('#player-cards .player-card', (cards) => cards.length), 8);
+    assert.equal(await big.$eval('#player-cards', (grid) => grid.classList.contains('crowded')), true);
+    const cardColors = await big.$$eval('#player-cards .player-card', (cards) => cards.map((card) => getComputedStyle(card).getPropertyValue('--player-color').trim()));
+    assert.equal(new Set(cardColors).size, 8);
+    assert.equal(await big.$$eval('#payment-from option', (options) => options.length), 9, 'bank + 8 players');
+    for (const width of [375, 320]) {
+      const phone = await browser.newPage({ viewport: { width, height: 740 } });
+      await phone.goto(big.url());
+      await phone.waitForSelector('#identity-dialog[open]');
+      const dialogFits = await phone.$eval('#identity-dialog', (dialog) => dialog.getBoundingClientRect().right <= innerWidth);
+      assert.equal(dialogFits, true, `identity picker fits at ${width}px`);
+      await phone.click('#identity-options [data-identity="banker"]');
+      assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `no horizontal scroll at ${width}px`);
+      await phone.close();
+    }
+    await big.close();
+  });
+
   await t.test('logs no console or CSP errors', () => {
     assert.deepEqual(errors, []);
   });

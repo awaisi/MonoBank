@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, performAction, calculateRent, normalizeRules } from '../lib/game.mjs';
+import { createGame, performAction, calculateRent, normalizeRules, MAX_PLAYERS, MIN_PLAYERS } from '../lib/game.mjs';
 
 const makeGame = () => createGame({ players: ['Ana', 'Ben'], startingBalance: 1500 });
 const act = performAction;
@@ -142,8 +142,9 @@ test('the Bank can seed the Free Parking pot directly', () => {
 });
 
 test('game creation validates players, balance and rules', () => {
-  assert.throws(() => createGame({ players: ['A', 'B', 'C', 'D', 'E'] }), /between 2 and 4/);
-  assert.throws(() => createGame({ players: 'Ana, Ben' }), /between 2 and 4/);
+  assert.throws(() => createGame({ players: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] }), /between 2 and 8/);
+  assert.throws(() => createGame({ players: ['Solo'] }), /between 2 and 8/);
+  assert.throws(() => createGame({ players: 'Ana, Ben' }), /between 2 and 8/);
   assert.throws(() => createGame({ players: ['A', '  '] }), /needs a name/);
   assert.throws(() => createGame({ players: ['A', 'B'], startingBalance: 0 }), /between \$1/);
   assert.throws(() => createGame({ players: ['A', 'B'], startingBalance: 2_000_000 }), /between \$1/);
@@ -160,4 +161,26 @@ test('actions require an object and a valid jail flag', () => {
   assert.throws(() => act(game, 'transfer'), /Action is required/);
   assert.throws(() => act(game, { type: 'jail', playerId: game.players[0].id, inJail: 'yes' }), /on or off/);
   assert.throws(() => act(game, { type: 'jail', playerId: game.players[0].id, inJail: false }), /not in jail/);
+});
+
+test('supports up to 8 players, each with a distinct color and token', async () => {
+  const names = ['Ana', 'Ben', 'Cy', 'Di', 'Eve', 'Fay', 'Gus', 'Hal'];
+  const game = createGame({ players: names });
+  assert.equal(game.players.length, MAX_PLAYERS);
+  assert.equal(MIN_PLAYERS, 2);
+  assert.equal(new Set(game.players.map((player) => player.color)).size, 8);
+  assert.equal(new Set(game.players.map((player) => player.token)).size, 8);
+  assert.ok(game.players.every((player) => /^#[0-9a-f]{6}$/.test(player.color) && player.token));
+  const [ana, , , , , , , hal] = game.players;
+  performAction(game, { type: 'transfer', fromId: ana.id, toId: hal.id, amount: 100 });
+  performAction(game, { type: 'bankrupt', playerId: hal.id, creditorId: ana.id });
+  assert.equal(game.status, 'active', 'seven players remain');
+  assert.equal(ana.balance, 1500 - 100 + 1600);
+
+  // The setup form colors in public/app.js must match the server's seat colors.
+  const { readFile } = await import('node:fs/promises');
+  const client = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const clientColors = JSON.parse(client.match(/const PLAYER_COLORS = (\[[^\]]+\])/)[1].replaceAll("'", '"'));
+  assert.deepEqual(clientColors, game.players.map((player) => player.color));
+  assert.equal(Number(client.match(/const MAX_PLAYERS = (\d+)/)[1]), MAX_PLAYERS);
 });
