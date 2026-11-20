@@ -355,25 +355,32 @@ function renderPlayersBar() {
   const players = filtering ? orderedPlayers(activePlayers()) : orderedPlayers();
   if (deedOwnerFilter !== 'all' && deedOwnerFilter !== 'bank' && !activePlayers().some((player) => player.id === deedOwnerFilter)) deedOwnerFilter = 'all';
   const jailRule = rules().noRentInJail;
-  const chip = (player) => {
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  // Same tile on every tab, so the row keeps its height; on Deeds the tiles toggle the owner filter instead of opening a sheet.
+  const tile = (player) => {
     const isMe = player.id === mePlayer()?.id;
     const winner = game.status === 'ended' && game.winnerIds.includes(player.id);
-    const classes = ['player-chip', isMe && 'is-me', player.bankrupt && 'bankrupt', winner && 'winner', filtering && deedOwnerFilter === player.id && 'active'].filter(Boolean).join(' ');
-    const flags = `${winner ? '<span class="chip-flag" title="Winner">★</span>' : ''}${jailRule && player.inJail ? '<span class="chip-flag" title="In jail">🔒</span>' : ''}`;
+    const worth = standingFor(player.id)?.total ?? player.balance;
+    const status = player.bankrupt ? 'Bankrupt' : winner ? '★ Winner' : jailRule && player.inJail ? '🔒 In jail' : '';
+    const classes = ['player-tile', isMe && 'is-me', player.bankrupt && 'bankrupt', winner && 'winner', filtering && deedOwnerFilter === player.id && 'active'].filter(Boolean).join(' ');
     const attrs = filtering ? `data-owner="${player.id}" aria-pressed="${deedOwnerFilter === player.id}"` : `data-player="${player.id}" aria-haspopup="dialog"`;
-    return `<button type="button" class="${classes}" ${attrs} data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span class="chip-text"><small>${escapeHtml(player.name)}${isMe ? ' · you' : ''}</small><b>${player.bankrupt ? 'Bankrupt' : money.format(player.balance)}</b></span>${flags}${filtering ? `<span class="chip-count" title="Deeds">${deedCount(player.id)}</span>` : ''}</button>`;
+    return `<button type="button" class="${classes}" ${attrs} data-vars="--player-color=${escapeHtml(player.color)}"><span class="tile-head"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span class="tile-name">${escapeHtml(player.name)}</span>${isMe ? '<span class="you-badge">You</span>' : ''}</span><b class="tile-balance">${player.bankrupt ? '—' : money.format(player.balance)}</b>${player.bankrupt ? '<small class="tile-meta">Out of the game</small>' : `<small class="tile-meta">Net worth ${money.format(worth)}</small><small class="tile-meta">${plural(deedCount(player.id), 'deed')}</small>`}${status ? `<span class="tile-status">${status}</span>` : ''}</button>`;
   };
-  const chips = players.map(chip);
+  const tiles = players.map(tile);
   if (filtering) {
-    chips.unshift(`<span class="bar-label">Deeds</span><button type="button" class="player-chip plain ${deedOwnerFilter === 'all' ? 'active' : ''}" data-owner="all" aria-pressed="${deedOwnerFilter === 'all'}"><span class="chip-text"><b>All</b></span><span class="chip-count">${game.properties.length}</span></button>`);
-    chips.push(`<button type="button" class="player-chip plain ${deedOwnerFilter === 'bank' ? 'active' : ''}" data-owner="bank" aria-pressed="${deedOwnerFilter === 'bank'}"><span class="chip-text"><b>Bank</b></span><span class="chip-count">${deedCount('bank')}</span></button>`);
+    tiles.unshift(`<button type="button" class="player-tile plain ${deedOwnerFilter === 'all' ? 'active' : ''}" data-owner="all" aria-pressed="${deedOwnerFilter === 'all'}"><span class="tile-head"><span class="tile-name">All deeds</span></span><b class="tile-balance">${game.properties.length}</b><small class="tile-meta">On the board</small></button>`);
+    tiles.push(`<button type="button" class="player-tile plain ${deedOwnerFilter === 'bank' ? 'active' : ''}" data-owner="bank" aria-pressed="${deedOwnerFilter === 'bank'}"><span class="tile-head"><span class="tile-name">Bank</span></span><b class="tile-balance">${deedCount('bank')}</b><small class="tile-meta">Unowned deeds</small></button>`);
   } else if (rules().freeParkingJackpot) {
-    chips.push(`<button type="button" class="player-chip parking" data-parking aria-haspopup="dialog" data-vars="--player-color=#d6b661"><span class="mini-token" aria-hidden="true">P</span><span class="chip-text"><small>Free Parking</small><b>${money.format(game.freeParking || 0)}</b></span></button>`);
+    tiles.push(`<button type="button" class="player-tile parking" data-parking aria-haspopup="dialog" data-vars="--player-color=#d6b661"><span class="tile-head"><span class="mini-token" aria-hidden="true">P</span><span class="tile-name">Free Parking</span></span><b class="tile-balance">${money.format(game.freeParking || 0)}</b><small class="tile-meta">Jackpot · tap to pay out</small></button>`);
   }
   const bar = $('#players-bar');
+  const scrollLeft = bar.scrollLeft;
   bar.classList.toggle('filtering', filtering);
+  bar.classList.toggle('crowded', tiles.length > 5);
   bar.setAttribute('aria-label', filtering ? 'Filter deeds by owner' : 'Players');
-  bar.innerHTML = chips.join('');
+  bar.innerHTML = tiles.join('');
+  // Re-rendering replaces the tiles; keep the row where the user scrolled it (live updates arrive often).
+  bar.scrollLeft = scrollLeft;
   applyStyleVars(bar);
   $$('[data-player]', bar).forEach((button) => button.addEventListener('click', () => openSheet({ kind: 'player', id: button.dataset.player })));
   $$('[data-owner]', bar).forEach((button) => button.addEventListener('click', () => {
