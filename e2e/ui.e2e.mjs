@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createAppServer } from '../server.mjs';
-import { GameStore } from '../lib/game.mjs';
+import { GameStore } from '../lib/store.mjs';
 
 const require = createRequire(import.meta.url);
 let chromium;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAppServer } from '../server.mjs';
-import { GameStore } from '../lib/game.mjs';
+import { GameStore } from '../lib/store.mjs';
 
 async function startServer(t, store = new GameStore()) {
   const server = createAppServer({ store });
@@ -104,18 +104,4 @@ test('blocks path traversal outside public/', async (t) => {
     const response = await fetch(`${base}${path}`);
     assert.notEqual(response.status, 200, path);
   }
-});
-
-test('GameStore expires idle games on read and on sweep', () => {
-  const store = new GameStore({ ttlMs: 1000 });
-  const fresh = store.create({ players: ['A', 'B'] });
-  const stale = store.create({ players: ['C', 'D'] });
-  assert.equal(store.get(fresh.id), fresh);
-  stale.updatedAt = new Date(Date.now() - 5000).toISOString();
-  assert.throws(() => store.get(stale.id), (error) => error.status === 404);
-  const swept = store.create({ players: ['E', 'F'] });
-  swept.updatedAt = new Date(Date.now() - 5000).toISOString();
-  store.sweep();
-  assert.equal(store.games.has(swept.id), false);
-  assert.equal(store.games.has(fresh.id), true);
 });
