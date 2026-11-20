@@ -5,6 +5,21 @@ param logAnalyticsName string
 param appName string
 param deployApp bool
 param containerImage string
+param customDomain string
+param customDomainCertificateId string
+
+// A custom domain is first attached unbound (so Azure can issue a managed
+// certificate for it), then bound with SNI once the certificate exists.
+var customDomains = empty(customDomain) ? [] : [
+  empty(customDomainCertificateId) ? {
+    name: customDomain
+    bindingType: 'Disabled'
+  } : {
+    name: customDomain
+    bindingType: 'SniEnabled'
+    certificateId: customDomainCertificateId
+  }
+]
 
 var tags = {
   application: 'MonoBank'
@@ -76,6 +91,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         targetPort: 3000
         transport: 'auto'
         allowInsecure: false
+        customDomains: customDomains
       }
       secrets: [
         {
@@ -129,4 +145,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
 output registryName string = registry.name
 output registryLoginServer string = registry.properties.loginServer
 output appName string = appName
+output environmentName string = environment.name
+output environmentDefaultDomain string = environment.properties.defaultDomain
+output customDomainVerificationId string = environment.properties.customDomainConfiguration.customDomainVerificationId
 output appUrl string = deployApp ? 'https://${app!.properties.configuration.ingress.fqdn}' : ''

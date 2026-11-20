@@ -15,6 +15,12 @@ param deployApp bool = false
 @description('Full container image reference, e.g. myregistry.azurecr.io/monobank:sha. Required when deployApp is true.')
 param containerImage string = ''
 
+@description('Optional custom hostname, e.g. monobank.example.com. Its CNAME and asuid TXT records must already exist.')
+param customDomain string = ''
+
+@description('Resource ID of the managed certificate for customDomain. Leave empty to attach the hostname unbound so a certificate can be issued.')
+param customDomainCertificateId string = ''
+
 var suffix = uniqueString(subscription().id, environmentName, baseName)
 var resourceGroupName = 'rg-${baseName}-${environmentName}'
 
@@ -39,6 +45,8 @@ module containerApps 'containerapps.bicep' = {
     appName: '${baseName}-${environmentName}'
     deployApp: deployApp
     containerImage: containerImage
+    customDomain: customDomain
+    customDomainCertificateId: customDomainCertificateId
   }
 }
 
@@ -47,3 +55,6 @@ output registryName string = containerApps.outputs.registryName
 output registryLoginServer string = containerApps.outputs.registryLoginServer
 output appName string = containerApps.outputs.appName
 output webAppUrl string = containerApps.outputs.appUrl
+output environmentName string = containerApps.outputs.environmentName
+output environmentDefaultDomain string = containerApps.outputs.environmentDefaultDomain
+output customDomainVerificationId string = containerApps.outputs.customDomainVerificationId

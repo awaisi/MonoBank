@@ -16,6 +16,9 @@ concurrency:
 env:
   # Set the repository variable AZURE_LOCATION to override the region.
   AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus2' }}
+  # Custom hostname served from Cloudflare DNS. Set the repository variable
+  # CUSTOM_DOMAIN to change it, or to "none" to disable.
+  CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN || 'monobank.divviq.app' }}
 
 jobs:
   build:
@@ -51,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: ${{ steps.app.outputs.webAppUrl }}
+      url: ${{ steps.domain.outputs.domain && format('https://{0}', steps.domain.outputs.domain) || steps.app.outputs.webAppUrl }}
     steps:
       - uses: actions/checkout@v4
 
@@ -61,6 +64,9 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure CLI Container Apps extension
+        run: az extension add --name containerapp --upgrade --yes --only-show-errors
 
       - name: Register resource providers
         run: |
@@ -78,8 +84,10 @@ jobs:
             --template-file infra/main.bicep \
             --parameters location="$AZURE_LOCATION" deployApp=false \
             --query properties.outputs -o json)
-          echo "registryName=$(jq -r .registryName.value <<<"$out")" >> "$GITHUB_OUTPUT"
-          echo "registryLoginServer=$(jq -r .registryLoginServer.value <<<"$out")" >> "$GITHUB_OUTPUT"
+          for key in resourceGroupName registryName registryLoginServer appName \
+                     environmentName environmentDefaultDomain customDomainVerificationId; do
+            echo "$key=$(jq -r ".$key.value" <<<"$out")" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Build and push image
         id: image
@@ -93,10 +101,51 @@ jobs:
           docker push "$image"
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
+      - name: Configure custom domain DNS (Cloudflare)
+        id: domain
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          RG: ${{ steps.infra.outputs.resourceGroupName }}
+          ENV_NAME: ${{ steps.infra.outputs.environmentName }}
+          APP_FQDN: ${{ steps.infra.outputs.appName }}.${{ steps.infra.outputs.environmentDefaultDomain }}
+          VERIFICATION_ID: ${{ steps.infra.outputs.customDomainVerificationId }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CUSTOM_DOMAIN" ] || [ "$CUSTOM_DOMAIN" = "none" ]; then
+            echo "domain=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ZONE_ID" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID secrets are not set; skipping custom domain $CUSTOM_DOMAIN."
+            echo "domain=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          infra/cloudflare-dns.sh CNAME "$CUSTOM_DOMAIN" "$APP_FQDN"
+          infra/cloudflare-dns.sh TXT "asuid.$CUSTOM_DOMAIN" "$VERIFICATION_ID"
+
+          echo "Waiting for public DNS..."
+          for i in $(seq 1 30); do
+            cname=$(dig +short CNAME "$CUSTOM_DOMAIN" @1.1.1.1 | sed 's/\.$//')
+            txt=$(dig +short TXT "asuid.$CUSTOM_DOMAIN" @1.1.1.1 | tr -d '"')
+            if [ "$cname" = "$APP_FQDN" ] && [ "$txt" = "$VERIFICATION_ID" ]; then
+              echo "DNS ready"; break
+            fi
+            [ "$i" -eq 30 ] && { echo "DNS records did not propagate" >&2; exit 1; }
+            sleep 10
+          done
+
+          cert_id=$(az containerapp env certificate list -g "$RG" -n "$ENV_NAME" \
+            --managed-certificates-only \
+            --query "[?properties.subjectName=='$CUSTOM_DOMAIN' && properties.provisioningState=='Succeeded'].id | [0]" \
+            -o tsv 2>/dev/null || true)
+          echo "domain=$CUSTOM_DOMAIN" >> "$GITHUB_OUTPUT"
+          echo "certificateId=$cert_id" >> "$GITHUB_OUTPUT"
+
       - name: Deploy container app (Bicep)
         id: app
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+          DOMAIN: ${{ steps.domain.outputs.domain }}
+          CERT_ID: ${{ steps.domain.outputs.certificateId }}
         run: |
           set -euo pipefail
           out=$(az deployment sub create \
@@ -104,19 +153,42 @@ jobs:
             --location "$AZURE_LOCATION" \
             --template-file infra/main.bicep \
             --parameters location="$AZURE_LOCATION" deployApp=true containerImage="$IMAGE" \
+                         customDomain="$DOMAIN" customDomainCertificateId="$CERT_ID" \
             --query properties.outputs -o json)
           url=$(jq -r .webAppUrl.value <<<"$out")
           echo "webAppUrl=$url" >> "$GITHUB_OUTPUT"
           echo "### MonoBank deployed: $url" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify /health
+      - name: Issue and bind managed certificate
+        if: steps.domain.outputs.domain != '' && steps.domain.outputs.certificateId == ''
+        env:
+          DOMAIN: ${{ steps.domain.outputs.domain }}
         run: |
-          url="${{ steps.app.outputs.webAppUrl }}/health"
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 10 "$url"; then
-              echo; echo "Healthy: $url"; exit 0
-            fi
-            echo "Attempt $i: not healthy yet"; sleep 10
-          done
-          echo "App did not become healthy at $url" >&2
-          exit 1
+          az containerapp hostname bind \
+            --resource-group "${{ steps.infra.outputs.resourceGroupName }}" \
+            --name "${{ steps.infra.outputs.appName }}" \
+            --environment "${{ steps.infra.outputs.environmentName }}" \
+            --hostname "$DOMAIN" \
+            --validation-method CNAME \
+            --output none
+
+      - name: Verify /health
+        env:
+          DOMAIN: ${{ steps.domain.outputs.domain }}
+        run: |
+          check() {
+            local url="$1/health"
+            for i in $(seq 1 30); do
+              if curl -fsS --max-time 10 "$url"; then
+                echo; echo "Healthy: $url"; return 0
+              fi
+              echo "Attempt $i: not healthy yet ($url)"; sleep 10
+            done
+            echo "App did not become healthy at $url" >&2
+            return 1
+          }
+          check "${{ steps.app.outputs.webAppUrl }}"
+          if [ -n "$DOMAIN" ]; then
+            check "https://$DOMAIN"
+            echo "### Custom domain: https://$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
+          fi
