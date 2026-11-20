@@ -13,6 +13,17 @@ let activeView = 'pay';
 let pollTimer;
 let shownResultsFor = null;
 let spectatorToken = null; // set on /watch/<token> pages
+// Activity page: every ledger entry this device has seen (newest first), plus paging and filter state.
+const LEDGER_STEP = 50;
+const LEDGER_TYPES = { all: null, payments: ['transfer', 'tax', 'fee', 'parking'], rent: ['rent'], deeds: ['purchase', 'auction', 'mortgage', 'unmortgage'], building: ['building'], trades: ['trade'] };
+let ledgerCache = [];
+let ledgerExhausted = false;
+let ledgerHasMore = false;
+let ledgerLoading = false;
+let ledgerLimit = LEDGER_STEP;
+let ledgerType = 'all';
+let ledgerShowUndone = false;
+let ledgerMatches = 0;
 let stream = null;         // EventSource for live updates
 let streamLive = false;
 let acting = false;        // an action from this device is in flight
@@ -282,7 +293,20 @@ function showSetup() {
   clearInterval(pollTimer);
 }
 
+function resetLedger() {
+  ledgerCache = [];
+  ledgerExhausted = false;
+  ledgerLimit = LEDGER_STEP;
+  ledgerType = 'all';
+  ledgerShowUndone = false;
+  $('#ledger-search').value = '';
+}
+
+const apiBase = () => (isSpectator() ? `/api/watch/${spectatorToken}` : `/api/games/${game.id}`);
+
 function showGame() {
+  resetLedger();
+  $('#export-activity').href = `${apiBase()}/activity.csv`;
   $('#setup-screen').hidden = true;
   $('#game-screen').hidden = false;
   $('#game-actions').hidden = false;
@@ -641,28 +665,169 @@ function timeAgo(iso) {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
+const clockTime = (date) => date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const isToday = (date) => date.toDateString() === new Date().toDateString();
+
+// Recent rows say "now" or "5m"; after ten minutes a clock time is more useful in a long game.
+function rowTime(iso) {
+  const date = new Date(iso);
+  if (Date.now() - date < 10 * 60000) return timeAgo(iso);
+  return isToday(date) ? clockTime(date) : `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${clockTime(date)}`;
+}
+
+// Rows are grouped into 15-minute blocks so a long game reads like a timeline.
+function timeBlock(iso) {
+  const date = new Date(iso);
+  date.setMinutes(Math.floor(date.getMinutes() / 15) * 15, 0, 0);
+  return date;
+}
+
+const blockLabel = (date) => (isToday(date) ? clockTime(date) : `${date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} · ${clockTime(date)}`);
+const seatIndex = (playerId) => game.players.findIndex((player) => player.id === playerId);
+
+// Cash change for one player: from the server's balance stamps, or the payer/payee on older entries.
+function cashChange(item, playerId) {
+  if (item.deltas) return item.deltas[seatIndex(playerId)] ?? 0;
+  return (item.toId === playerId ? item.amount || 0 : 0) - (item.fromId === playerId ? item.amount || 0 : 0);
+}
+
+const involves = (item, filter) => filter === 'all' || item.fromId === filter || item.toId === filter || (filter !== 'bank' && Boolean(item.deltas?.[seatIndex(filter)]));
+
+function matchesSearch(item, query) {
+  if (!query) return true;
+  const property = item.propertyId ? game.properties.find((entry) => entry.id === item.propertyId)?.name || '' : '';
+  return `${item.label} ${item.detail} ${property}`.toLowerCase().includes(query);
+}
+
+// One ledger row. With a player (or the Bank) selected, amounts are signed from their side and show the balance after.
+function ledgerRow(item, viewer = null) {
+  let amount = item.amount != null ? money.format(item.amount) : '—';
+  let tone = '';
+  let after = '';
+  if (viewer === 'bank' && item.amount) {
+    if (item.fromId === 'bank') { amount = `−${money.format(item.amount)}`; tone = 'out'; }
+    if (item.toId === 'bank') { amount = `+${money.format(item.amount)}`; tone = 'in'; }
+  } else if (viewer) {
+    const change = cashChange(item, viewer);
+    if (change) { amount = `${change > 0 ? '+' : '−'}${money.format(Math.abs(change))}`; tone = change > 0 ? 'in' : 'out'; }
+    const balance = item.balances?.[seatIndex(viewer)];
+    if (balance != null) after = ` · balance ${money.format(balance)}`;
+  }
+  return `<article class="ledger-item ${item.undone ? 'undone' : ''} ${item.type === 'undo' ? 'is-undo' : ''}"><span class="ledger-icon">${transactionIcon(item.type)}</span><span class="ledger-copy"><strong>${escapeHtml(item.label)}</strong><small>${item.undone ? 'Undone · ' : ''}${escapeHtml(item.detail || item.type)}${after}</small></span><span class="ledger-amount"><b class="${tone}">${amount}</b><time datetime="${item.at}">${rowTime(item.at)}</time></span></article>`;
+}
+
 function ledgerHtml(items) {
   if (!items.length) return '<div class="empty-state">No transactions yet.</div>';
-  return items.map((item) => `<article class="ledger-item ${item.undone ? 'undone' : ''}"><span class="ledger-icon">${transactionIcon(item.type)}</span><span class="ledger-copy"><strong>${escapeHtml(item.label)}</strong><small>${item.undone ? 'Undone · ' : ''}${escapeHtml(item.detail || item.type)}</small></span><span class="ledger-amount">${item.amount != null ? money.format(item.amount) : '—'}<time datetime="${item.at}">${timeAgo(item.at)}</time></span></article>`).join('');
+  return items.map((item) => ledgerRow(item)).join('');
+}
+
+// Phones get the newest entries with every update; keep older ones this device already loaded or saw.
+function mergeLedger() {
+  const fresh = game.transactions;
+  const ids = new Set(fresh.map((item) => item.id));
+  ledgerCache = [...fresh, ...ledgerCache.filter((item) => !ids.has(item.id))];
+  ledgerHasMore = !ledgerExhausted && ledgerCache.length < (game.transactionCount ?? fresh.length);
 }
 
 function renderLedger() {
-  $('#mini-ledger').innerHTML = ledgerHtml(game.transactions.slice(0, 6));
+  mergeLedger();
+  $('#mini-ledger').innerHTML = ledgerHtml(ledgerCache.slice(0, 6));
   const select = $('#ledger-filter');
   const current = select.value || 'all';
   const options = [{ id: 'all', name: 'Everyone' }, ...orderedPlayers().map((player) => ({ id: player.id, name: player.id === mePlayer()?.id ? `${player.name} (you)` : player.name })), { id: 'bank', name: 'The Bank' }];
   select.innerHTML = options.map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join('');
   select.value = options.some((item) => item.id === current) ? current : 'all';
   const filter = select.value;
-  const items = filter === 'all' ? game.transactions : game.transactions.filter((item) => item.fromId === filter || item.toId === filter);
+  const query = $('#ledger-search').value.trim().toLowerCase();
+  const types = LEDGER_TYPES[ledgerType];
+  $$('[data-ledger-type]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.ledgerType === ledgerType)));
+  const matches = ledgerCache.filter((item) => (!types || types.includes(item.type)) && involves(item, filter) && matchesSearch(item, query));
+  const items = ledgerShowUndone ? matches : matches.filter((item) => !item.undone && item.type !== 'undo');
+  const hiddenUndone = matches.length - items.length;
+  ledgerMatches = items.length;
+  const shown = items.slice(0, ledgerLimit);
+  const viewer = filter === 'all' ? null : filter;
+  const blocks = [];
+  shown.forEach((item) => {
+    const key = timeBlock(item.at).getTime();
+    if (blocks.at(-1)?.key !== key) blocks.push({ key, items: [] });
+    blocks.at(-1).items.push(item);
+  });
   const name = filter === 'bank' ? 'the Bank' : playerById(filter)?.name;
-  $('#full-ledger').innerHTML = items.length || filter === 'all' ? ledgerHtml(items) : `<div class="empty-state">No activity for ${escapeHtml(name)} yet.</div>`;
+  const narrowed = query || types;
+  const empty = narrowed ? `No moves match${ledgerHasMore ? ' yet. Older moves aren’t loaded: tap Show earlier.' : '.'}` : filter === 'all' ? 'No transactions yet.' : `No activity for ${escapeHtml(name)} yet.`;
+  $('#full-ledger').innerHTML = blocks.length ? blocks.map((block) => `<section class="ledger-group"><h3 class="ledger-group-head"><span>${blockLabel(new Date(block.key))}</span><small>${block.items.length} ${block.items.length === 1 ? 'move' : 'moves'}</small></h3>${block.items.map((item) => ledgerRow(item, viewer)).join('')}</section>`).join('') : `<div class="empty-state">${empty}</div>`;
+  const more = $('#ledger-more');
+  more.hidden = !(items.length > ledgerLimit || ledgerHasMore);
+  more.disabled = ledgerLoading;
+  more.textContent = ledgerLoading ? 'Loading…' : 'Show earlier';
+  const undone = $('#ledger-undone');
+  undone.hidden = !hiddenUndone && !ledgerShowUndone;
+  undone.textContent = ledgerShowUndone ? 'Hide undone' : `Show ${hiddenUndone} undone`;
+  undone.setAttribute('aria-pressed', String(ledgerShowUndone));
+  const trimmed = game.transactionsDropped && !ledgerHasMore ? ` The first ${game.transactionsDropped.toLocaleString()} entries of this long game are no longer stored.` : '';
+  $('#ledger-note').textContent = shown.length ? `Showing ${shown.length} of ${items.length}${ledgerHasMore ? '+' : ''} ${items.length === 1 ? 'entry' : 'entries'}.${trimmed}` : trimmed.trim();
+  renderActivitySummary(filter);
 }
 
+async function loadEarlier() {
+  if (ledgerMatches > ledgerLimit) {
+    ledgerLimit += LEDGER_STEP;
+    return renderLedger();
+  }
+  if (!ledgerHasMore || ledgerLoading) return;
+  ledgerLoading = true;
+  renderLedger();
+  try {
+    const page = await api(`${apiBase()}/transactions?before=${encodeURIComponent(ledgerCache.at(-1).id)}`);
+    const ids = new Set(ledgerCache.map((item) => item.id));
+    ledgerCache.push(...page.transactions.filter((item) => !ids.has(item.id)));
+    ledgerExhausted = !page.hasMore;
+    ledgerLimit += LEDGER_STEP;
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    ledgerLoading = false;
+    renderLedger();
+  }
+}
+
+// "Game so far" for everyone (or the Bank); one player's money in and out when a player is selected.
+function renderActivitySummary(filter) {
+  const stats = game.activity;
+  if (!stats) return;
+  const signed = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${money.format(Math.abs(value))}`;
+  let title;
+  let facts;
+  const row = stats.players[filter];
+  if (row) {
+    const net = row.moneyIn - row.moneyOut;
+    title = `${escapeHtml(playerById(filter)?.name || '')}’s game`;
+    facts = [
+      ['Money in', signed(row.moneyIn), 'in'], ['Money out', signed(-row.moneyOut), 'out'], ['Net', signed(net), net > 0 ? 'in' : net < 0 ? 'out' : ''],
+      ['Rent collected', money.format(row.rentCollected)], ['Rent paid', money.format(row.rentPaid)], ['Taxes & fees', money.format(row.taxesPaid)],
+      ['Passed GO', `${row.goPasses}×`], ['Moves', row.moves]
+    ];
+  } else {
+    const [topId, topRent] = Object.entries(stats.players).map(([id, entry]) => [id, entry.rentCollected]).sort((a, b) => b[1] - a[1])[0] || [];
+    title = 'Game so far';
+    facts = [
+      ['Moves', stats.moves], ['Money moved', money.format(stats.moneyMoved)], ['Trades', stats.trades],
+      ['Top rent earner', topRent ? `${escapeHtml(playerById(topId)?.name || '')} · ${money.format(topRent)}` : '—'],
+      ...(rules().freeParkingJackpot ? [['Parking paid out', money.format(stats.parkingPaidOut)]] : [])
+    ];
+  }
+  const note = stats.complete ? '' : '<p class="fine-print">Totals cover the moves still stored; the start of this very long game was trimmed.</p>';
+  const html = `<h3 class="summary-title">${title}</h3><dl class="summary-facts">${facts.map(([label, value, tone = '']) => `<div><dt>${label}</dt><dd class="${tone}">${value}</dd></div>`).join('')}</dl>${note}`;
+  $('#ledger-summary').innerHTML = html;
+  $('#side-summary').innerHTML = html;
+}
 
 function switchView(view, { scroll = true } = {}) {
   if (isSpectator() && ['pay', 'trade'].includes(view)) view = 'ledger';
   const changed = view !== activeView;
+  // On wide screens the sidebar shows the activity summary instead of repeating the list on the Activity tab.
+  $('.desktop-grid')?.classList.toggle('ledger-open', view === 'ledger');
   activeView = view;
   if (game) renderPlayersBar();
   $$('.console-view').forEach((panel) => panel.hidden = panel.id !== `${view}-view`);
@@ -807,12 +972,13 @@ function playTimeText(time) {
 
 function openResults() {
   const rows = game.standings || [];
-  const rentBy = {};
-  game.transactions.filter((item) => item.type === 'rent' && !item.undone).forEach((item) => { rentBy[item.toId] = (rentBy[item.toId] || 0) + item.amount; });
+  // Totals come from the server over the whole stored ledger, not just the entries this device holds.
+  const rentBy = Object.fromEntries(Object.entries(game.activity?.players || {}).filter(([, entry]) => entry.rentCollected > 0).map(([id, entry]) => [id, entry.rentCollected]));
+  const moves = game.activity?.moves ?? 0;
   const played = playTimeText(game.playTime);
   const table = rows.map((row) => `<tr class="${game.winnerIds.includes(row.playerId) ? 'winner-row' : ''}"><td>${row.bankrupt ? '—' : row.rank}</td><td>${escapeHtml(row.name)}${row.bankrupt ? ' <small>bankrupt</small>' : ''}</td><td>${money.format(row.cash)}</td><td>${money.format(row.property)}</td><td>${money.format(row.buildings)}</td><td><strong>${money.format(row.total)}</strong></td></tr>`).join('');
   const rentLeader = Object.entries(rentBy).sort((a, b) => b[1] - a[1])[0];
-  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${played} · ${game.transactions.length} transactions${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
+  $('#results-content').innerHTML = `<div class="dialog-color results-band"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">FINAL STANDINGS</p><h2 id="results-title">${escapeHtml(winnerText())}</h2><p class="muted">${played} · ${moves} ${moves === 1 ? 'move' : 'moves'}${rentLeader ? ` · Top rent collector: ${escapeHtml(playerById(rentLeader[0])?.name || '')} (${money.format(rentLeader[1])})` : ''}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="table-scroll"><table class="results-table"><thead><tr><th>#</th><th>Player</th><th>Cash</th><th>Deeds</th><th>Buildings</th><th>Net worth</th></tr></thead><tbody>${table}</tbody></table></div><p class="fine-print">Net worth = cash + deeds at list price (mortgaged deeds minus what it costs to unmortgage them) + houses and hotels at what the Bank pays back (half price).</p><a class="secondary-button full results-export" href="${apiBase()}/activity.csv" download>⇩ Download activity (CSV)</a>${game.undo ? '<button type="button" class="secondary-button full" data-undo-results>↶ Undo game over and keep playing</button>' : ''}</div>`;
   $('[data-undo-results]', $('#results-content'))?.addEventListener('click', async () => {
     if (await submitAction({ type: 'undo' }, 'Back in play.')) $('#results-dialog').close();
   });
@@ -1014,7 +1180,12 @@ function bindEvents() {
   $$('[data-undo]').forEach((button) => button.addEventListener('click', undoLast));
   $('#bankrupt-form').addEventListener('submit', declareBankruptcy);
   $('#bankrupt-player').addEventListener('change', renderCreditors);
-  $('#ledger-filter').addEventListener('change', renderLedger);
+  const refilter = () => { ledgerLimit = LEDGER_STEP; renderLedger(); };
+  $('#ledger-filter').addEventListener('change', refilter);
+  $('#ledger-search').addEventListener('input', refilter);
+  $$('[data-ledger-type]').forEach((button) => button.addEventListener('click', () => { ledgerType = button.dataset.ledgerType; refilter(); }));
+  $('#ledger-more').addEventListener('click', loadEarlier);
+  $('#ledger-undone').addEventListener('click', () => { ledgerShowUndone = !ledgerShowUndone; renderLedger(); });
   $('#player-dialog').addEventListener('close', () => { sheet = null; });
   ['#qr-dialog', '#results-dialog', '#end-dialog', '#identity-dialog', '#raise-dialog', '#player-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
     if (event.target === $(selector) || event.target.closest('[data-close-dialog]')) $(selector).close();

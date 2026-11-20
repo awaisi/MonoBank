@@ -47,6 +47,7 @@
             <button type="button" role="menuitem" id="share-game"><span aria-hidden="true">↗</span>Copy game link</button>
             <button type="button" role="menuitem" id="copy-watch" class="player-only"><span aria-hidden="true">👁</span>Copy spectator link</button>
             <button type="button" role="menuitem" id="switch-player" class="player-only"><span aria-hidden="true">👤</span>Switch player…</button>
+            <a role="menuitem" id="export-activity" href="#" download><span aria-hidden="true">⇩</span>Download activity (CSV)</a>
             <button type="button" role="menuitemcheckbox" id="sound-toggle" aria-checked="true"><span aria-hidden="true">🔊</span>Sound &amp; vibration</button>
             <button type="button" role="menuitem" id="end-game" class="menu-danger"><span aria-hidden="true">★</span>Finish game…</button>
           </div>
@@ -181,14 +182,32 @@
 
             <div id="ledger-view" class="console-view" hidden>
               <div class="view-heading"><div><p class="kicker">BANK RECORD</p><h2>Activity</h2></div><button type="button" class="undo-button" data-undo hidden>↶ Undo</button></div>
-              <label class="ledger-filter"><span>Show</span><select id="ledger-filter" aria-label="Filter activity by player"><option value="all">Everyone</option></select></label>
-              <div id="full-ledger" class="ledger-list"></div>
+              <div id="ledger-summary" class="activity-summary" aria-live="polite"></div>
+              <div class="ledger-controls">
+                <label class="ledger-filter"><span>Show</span><select id="ledger-filter" aria-label="Filter activity by player"><option value="all">Everyone</option></select></label>
+                <label class="ledger-search"><span class="sr-only">Search activity</span><input type="search" id="ledger-search" placeholder="Search deeds, players, notes" autocomplete="off"></label>
+              </div>
+              <div class="ledger-types" role="group" aria-label="Filter by type">
+                <button type="button" data-ledger-type="all" aria-pressed="true">All</button>
+                <button type="button" data-ledger-type="payments" aria-pressed="false">Payments</button>
+                <button type="button" data-ledger-type="rent" aria-pressed="false">Rent</button>
+                <button type="button" data-ledger-type="deeds" aria-pressed="false">Deeds</button>
+                <button type="button" data-ledger-type="building" aria-pressed="false">Building</button>
+                <button type="button" data-ledger-type="trades" aria-pressed="false">Trades</button>
+              </div>
+              <div id="full-ledger" class="ledger-list full"></div>
+              <div class="ledger-footer">
+                <button type="button" class="secondary-button" id="ledger-more" hidden>Show earlier</button>
+                <button type="button" class="text-button" id="ledger-undone" hidden></button>
+                <p class="fine-print" id="ledger-note"></p>
+              </div>
             </div>
           </section>
 
           <aside class="activity-panel">
             <div class="section-label"><h2>Latest activity</h2><span class="section-actions"><button type="button" class="undo-link" data-undo hidden>↶ Undo</button><button type="button" data-open-view="ledger">View all</button></span></div>
             <div id="mini-ledger" class="ledger-list compact"></div>
+            <div id="side-summary" class="activity-summary side-summary"></div>
             <div class="session-card"><span class="live-dot"></span><div><strong>Shared session</strong><small>Anyone with this game link can bank.</small></div></div>
           </aside>
         </div>

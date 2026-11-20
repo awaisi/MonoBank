@@ -21,7 +21,7 @@ Live at **https://monobank.divviq.app**.
 - **No overdrafts:** a player can't spend more than they have. MonoBank shows how much is missing and offers to mortgage deeds or sell buildings first, or to declare bankruptcy.
 - **Player tiles:** one row of tiles at the top of every tab shows each player's balance, net worth, deed count and status. Tap a player for their sheet (breakdown, deeds, one-tap quick actions). On **Deeds** the same tiles filter deeds by owner.
 - **Per-player quick actions:** Passed GO, Income Tax, Luxury Tax, Jail fee or any amount to or from the Bank, in one tap from the player's sheet.
-- **Activity filter:** show one player's (or the Bank's) transactions.
+- **Activity built for long games:** the full history in 15-minute blocks with clock times, filters by player, type and search, each player's money in/out with their balance after every move, a "Game so far" summary, and a CSV download.
 - **QR code** to join a game from another phone.
 - **Live on every phone:** payments appear on every device the moment they happen (server-sent events, with polling as a fallback).
 - **"This phone is me":** each device picks its player (or the banker) for a personal view: your tile first (marked **You**), and your name pre-filled.
@@ -65,7 +65,7 @@ Contributor and coding-agent guidance (architecture, conventions, deployment con
 ```bash
 npm test           # 116 unit and API tests (node:test)
 npm run coverage   # same, with a coverage report — lib/game.mjs, lib/store.mjs, lib/rate-limit.mjs, lib/streams.mjs and public/qr.js are at 100% line coverage
-npm run e2e        # 32 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
+npm run e2e        # 33 browser scenarios with Playwright, including multi-device live updates and spectators (skipped if Playwright isn't installed)
 ```
 
 The project has no dependencies; the e2e test loads Playwright only if it is already available.
@@ -86,7 +86,14 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 - **Your name first:** once a phone has picked its player, that player comes first in the player tiles, every player list and the activity filter.
 - **Paying rent:** open an owned deed, choose **Who pays rent?** and tap **Pay rent to Ana**. The owner is never offered as the payer.
 - **Filter deeds by owner:** on **Deeds**, the player tiles turn into an owner filter: tap **All deeds**, a player or **Bank** to see only those deeds. It combines with the search box and the status filter (available, owned, mortgaged).
-- **Activity filter:** **Activity → Show** narrows the feed to one player or the Bank (transactions they paid or received).
+- **Activity:** the Activity tab keeps the **whole game** (up to 2,000 entries), so a long game's opening moves aren't lost.
+  - **Timeline:** entries are grouped into 15-minute blocks (*8:30 PM · 12 moves*). Each row shows its clock time; the last ten minutes show *now* or *5m*. Rows are compact, one line on wider screens.
+  - **Filters:** **Show** picks everyone, one player or the Bank. Chips narrow to **Payments**, **Rent**, **Deeds** (buying and mortgages), **Building** or **Trades**, and the search box matches deeds, players and notes. They all combine.
+  - **A player's money:** with a player selected, amounts are signed from their side (**+$200** / **−$50**) and each row shows their balance after the move, including both sides of a trade. A summary card shows their money in and out, net, rent collected and paid, taxes and fees, and how many times they passed GO.
+  - **Game so far:** with no player selected, the card shows moves, money moved, trades, the top rent earner and Free Parking paid out. On wide screens it sits in the sidebar instead of a second copy of the list.
+  - **Undone entries** are hidden until you tap **Show N undone**.
+  - **Paging:** 50 rows show at first; **Show earlier** reveals more and fetches older entries from the server as needed.
+  - **Download:** **⋯ → Download activity (CSV)** (also on the results screen) saves every stored entry, oldest first, with each player's balance after every move. It works from spectator links too.
 - **Who's on this phone:** the first time a device opens a game, it asks *"Who's playing on this phone?"*. Pick a player or **I'm the banker**. The choice is remembered on that device for that game. It shows **Playing as Ana** next to the house rules, puts your tile first (with a **You** badge), and pre-fills *From* in payments, *Player one* in trades, the buyer in the deed desk and the payer when collecting rent. Tap your own tile on **Deeds** to see only your deeds. Change it any time with **Switch** or **⋯ → Switch player…**. It's a convenience view: every device can still bank for anyone, as at a real table.
 - **Live updates:** every game screen keeps a live connection to the server. When anyone acts, every phone and spectator updates within a moment, with a short chime. The dot in the game code turns amber while reconnecting, and the app falls back to checking every few seconds until the live connection returns.
 - **Spectators:** **Invite → Spectators** (or **⋯ → Copy spectator link**) gives a `/watch/<token>` link and QR code. Spectators see balances, deeds, standings and activity live, but get no payment, trade, bankruptcy, undo or end-game controls, and the server has no write route for spectator links. The spectator token is separate from the game ID, so a spectator can't work out the player link.
@@ -236,8 +243,10 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 
 - `POST /api/games` — create a game: `{ "players": ["Ana", "Ben"], "startingBalance": 1500, "rules": { "freeParkingJackpot": true, "freeParkingSeed": 500 } }` (`rules` is optional; omitted keys use the defaults)
 - `GET /api/games/:id/events` — **server-sent events** stream: an `event: game` message with the full public state on connect and after every change, plus a heartbeat comment every 25 s. Up to 50 streams per game and 2,000 in total (HTTP 503 beyond that).
-- `GET /api/watch/:token` and `GET /api/watch/:token/events` — the **spectator** equivalents: the same state with `id: null`, `spectator: true` and `undo: null`. There are no write routes for spectator tokens.
-- `GET /api/games/:id` — read current game state, including `viewToken` (the spectator token, for sharing), `rules`, `freeParking` (pot balance), each player's `inJail` and `bankrupt`, `status` (`active`/`ended`), `winnerIds`, `standings` (net worth breakdown, `raisable` and rank per player), `playTime` (once ended: `{ startedAt, endedAt, minutes }`, from the first move to the last move before Finish game), and `undo` (the action that undo would reverse, or `null`)
+- `GET /api/games/:id/transactions?before=<entryId>&limit=100` — older ledger entries after the given entry, newest first: `{ transactions, hasMore }` (404 if that entry is no longer stored).
+- `GET /api/games/:id/activity.csv` — the whole stored ledger as a CSV download (oldest first, with every player's balance after each move; cells that look like spreadsheet formulas are escaped).
+- `GET /api/watch/:token` and `GET /api/watch/:token/events` (plus read-only `/transactions` and `/activity.csv`) — the **spectator** equivalents: the same state with `id: null`, `spectator: true` and `undo: null`. There are no write routes for spectator tokens.
+- `GET /api/games/:id` — read current game state, including `viewToken` (the spectator token, for sharing), `rules`, `freeParking` (pot balance), each player's `inJail` and `bankrupt`, `status` (`active`/`ended`), `winnerIds`, `standings` (net worth breakdown, `raisable` and rank per player), `playTime` (once ended: `{ startedAt, endedAt, minutes }`, from the first move to the last move before Finish game), `transactions` (the newest 150 ledger entries, each with `balances` and `deltas` per seat after the move), `transactionCount`, `transactionsDropped` (entries trimmed past 2,000), `activity` (totals: moves, money moved, trades, Free Parking paid out, and per-player money in/out, rent, taxes and GO passes), and `undo` (the action that undo would reverse, or `null`)
 - `POST /api/games/:id/actions` — perform one action, selected by `type`:
 
   | `type` | Fields | Notes |
