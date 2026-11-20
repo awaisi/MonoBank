@@ -17,6 +17,8 @@ let stream = null;         // EventSource for live updates
 let streamLive = false;
 let acting = false;        // an action from this device is in flight
 let me = null;             // this device's player ID, 'banker', or null (not chosen)
+let deedOwnerFilter = 'all'; // Deeds tab owner filter: 'all', a player ID, or 'bank'
+let sheet = null;          // open player sheet: { kind: 'player', id } or { kind: 'parking' }
 
 // Payment feedback: a short chime and, where supported, a vibration.
 // Preference is per device (localStorage, best effort).
@@ -306,17 +308,15 @@ function renderGame() {
   renderRules();
   renderStatus();
   renderMe();
-  renderPlayers();
-  renderBalanceStrip();
   renderSelects();
   renderDeeds();
   renderTrade();
   renderLedger();
   renderUndo();
-  switchView(activeView);
+  switchView(activeView, { scroll: false });
+  refreshSheet();
   const ended = game.status === 'ended';
   $$('#game-screen .console-panel button[type="submit"]').forEach((button) => { button.disabled = ended; });
-  if (ended) $$('#parking-form button, .jail-toggle').forEach((button) => { button.disabled = true; });
   if (ended && shownResultsFor !== game.endedAt) {
     shownResultsFor = game.endedAt;
     openResults();
@@ -339,19 +339,112 @@ function renderMe() {
   const player = mePlayer();
   $('#me-bar').hidden = isSpectator() || !me;
   if (me && me !== 'banker' && !player) {
-    $('#me-text').innerHTML = 'You were a player who is no longer in the game.';
-  } else if (player?.bankrupt) {
-    $('#me-text').innerHTML = `Playing as <strong>${escapeHtml(player.name)}</strong> · bankrupt`;
+    $('#me-text').innerHTML = 'Your player has left the game';
   } else if (player) {
-    const worth = standingFor(player.id)?.total ?? player.balance;
-    $('#me-text').innerHTML = `Playing as <strong>${escapeHtml(player.name)}</strong> · ${money.format(player.balance)} · net worth ${money.format(worth)}`;
+    $('#me-text').innerHTML = `Playing as <strong>${escapeHtml(player.name)}</strong>${player.bankrupt ? ' · bankrupt' : ''}`;
   } else {
-    $('#me-text').innerHTML = '<strong>Banker view</strong> · every player';
+    $('#me-text').innerHTML = '<strong>Banker view</strong>';
   }
-  const mine = $('#deed-filter option[value="mine"]');
-  mine.hidden = !player;
-  mine.disabled = !player;
-  if (!player && $('#deed-filter').value === 'mine') $('#deed-filter').value = 'all';
+}
+
+// The one player list: a sticky bar under the header on every tab. Tapping a
+// player opens their sheet; on the Deeds tab the same bar filters deeds by owner.
+function renderPlayersBar() {
+  const filtering = activeView === 'deeds';
+  const deedCount = (ownerId) => game.properties.filter((property) => (game.deeds[property.id].ownerId || 'bank') === ownerId).length;
+  const players = filtering ? orderedPlayers(activePlayers()) : orderedPlayers();
+  if (deedOwnerFilter !== 'all' && deedOwnerFilter !== 'bank' && !activePlayers().some((player) => player.id === deedOwnerFilter)) deedOwnerFilter = 'all';
+  const jailRule = rules().noRentInJail;
+  const chip = (player) => {
+    const isMe = player.id === mePlayer()?.id;
+    const winner = game.status === 'ended' && game.winnerIds.includes(player.id);
+    const classes = ['player-chip', isMe && 'is-me', player.bankrupt && 'bankrupt', winner && 'winner', filtering && deedOwnerFilter === player.id && 'active'].filter(Boolean).join(' ');
+    const flags = `${winner ? '<span class="chip-flag" title="Winner">★</span>' : ''}${jailRule && player.inJail ? '<span class="chip-flag" title="In jail">🔒</span>' : ''}`;
+    const attrs = filtering ? `data-owner="${player.id}" aria-pressed="${deedOwnerFilter === player.id}"` : `data-player="${player.id}" aria-haspopup="dialog"`;
+    return `<button type="button" class="${classes}" ${attrs} data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span class="chip-text"><small>${escapeHtml(player.name)}${isMe ? ' · you' : ''}</small><b>${player.bankrupt ? 'Bankrupt' : money.format(player.balance)}</b></span>${flags}${filtering ? `<span class="chip-count" title="Deeds">${deedCount(player.id)}</span>` : ''}</button>`;
+  };
+  const chips = players.map(chip);
+  if (filtering) {
+    chips.unshift(`<span class="bar-label">Deeds</span><button type="button" class="player-chip plain ${deedOwnerFilter === 'all' ? 'active' : ''}" data-owner="all" aria-pressed="${deedOwnerFilter === 'all'}"><span class="chip-text"><b>All</b></span><span class="chip-count">${game.properties.length}</span></button>`);
+    chips.push(`<button type="button" class="player-chip plain ${deedOwnerFilter === 'bank' ? 'active' : ''}" data-owner="bank" aria-pressed="${deedOwnerFilter === 'bank'}"><span class="chip-text"><b>Bank</b></span><span class="chip-count">${deedCount('bank')}</span></button>`);
+  } else if (rules().freeParkingJackpot) {
+    chips.push(`<button type="button" class="player-chip parking" data-parking aria-haspopup="dialog" data-vars="--player-color=#d6b661"><span class="mini-token" aria-hidden="true">P</span><span class="chip-text"><small>Free Parking</small><b>${money.format(game.freeParking || 0)}</b></span></button>`);
+  }
+  const bar = $('#players-bar');
+  bar.classList.toggle('filtering', filtering);
+  bar.setAttribute('aria-label', filtering ? 'Filter deeds by owner' : 'Players');
+  bar.innerHTML = chips.join('');
+  applyStyleVars(bar);
+  $$('[data-player]', bar).forEach((button) => button.addEventListener('click', () => openSheet({ kind: 'player', id: button.dataset.player })));
+  $$('[data-owner]', bar).forEach((button) => button.addEventListener('click', () => {
+    deedOwnerFilter = button.dataset.owner;
+    renderDeeds();
+    renderPlayersBar();
+  }));
+  $('[data-parking]', bar)?.addEventListener('click', () => openSheet({ kind: 'parking' }));
+}
+
+// Player sheet: details and quick actions for one player (or the Free Parking pot).
+function openSheet(next) {
+  sheet = next;
+  refreshSheet();
+  if (sheet && !$('#player-dialog').open) $('#player-dialog').showModal();
+}
+
+function refreshSheet() {
+  if (!sheet || !game) return;
+  const ended = game.status === 'ended';
+  const canAct = !isSpectator() && !ended;
+  if (sheet.kind === 'parking') {
+    $('#player-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=#d6b661"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">HOUSE RULE</p><h2 id="player-title">Free Parking</h2><p class="muted">Taxes and fees collect here. Whoever lands on Free Parking takes the pot.</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="sheet-total"><small>In the pot</small><strong>${money.format(game.freeParking || 0)}</strong></div>${canAct ? `<form class="dialog-form" id="parking-form"><label class="field"><span>Who landed on Free Parking?</span><select id="parking-winner">${optionList({ selected: mePlayer()?.id })}</select></label><button type="submit" ${game.freeParking ? '' : 'disabled'}>COLLECT ${money.format(game.freeParking || 0)}</button></form>` : ''}</div>`;
+    applyStyleVars($('#player-content'));
+    $('#parking-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const winner = playerById($('#parking-winner').value);
+      if (await submitAction({ type: 'collect-parking', playerId: winner.id }, `${winner.name} collected Free Parking.`)) $('#player-dialog').close();
+    });
+    return;
+  }
+  const player = playerById(sheet.id);
+  if (!player) return $('#player-dialog').close();
+  const row = standingFor(player.id) || { cash: player.balance, property: 0, buildings: 0, raisable: 0, total: player.balance };
+  const isMe = player.id === mePlayer()?.id;
+  const jailRule = rules().noRentInJail;
+  const winner = ended && game.winnerIds.includes(player.id);
+  const status = player.bankrupt ? 'Bankrupt · out of the game' : winner ? 'Winner' : jailRule && player.inJail ? 'In jail · no rent until released' : player.balance < 0 ? 'Needs attention' : 'Ready to play';
+  const deeds = game.properties.filter((property) => game.deeds[property.id].ownerId === player.id);
+  const deedRows = deeds.map((property) => {
+    const deed = game.deeds[property.id];
+    const tags = [deed.buildings === 5 ? 'Hotel' : deed.buildings ? `${deed.buildings} house${deed.buildings === 1 ? '' : 's'}` : '', deed.mortgaged ? 'Mortgaged' : ''].filter(Boolean).join(' · ');
+    return `<li data-vars="--deed-color=${GROUP_COLORS[property.group]}"><span>${escapeHtml(property.name)}</span><small>${tags}</small></li>`;
+  }).join('');
+  const actions = [
+    deeds.length ? '<button type="button" class="secondary" data-sheet="deeds">Show deeds</button>' : '',
+    canAct && !player.bankrupt ? `<button type="button" class="secondary" data-sheet="pay">Pay from ${escapeHtml(player.name)}</button>` : '',
+    !isSpectator() && !isMe && !player.bankrupt ? '<button type="button" class="secondary" data-sheet="me">This is me</button>' : '',
+    canAct && jailRule && !player.bankrupt ? `<button type="button" class="secondary" data-sheet="jail" aria-pressed="${player.inJail}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : ''
+  ].filter(Boolean).join('');
+  $('#player-content').innerHTML = `<div class="dialog-color" data-vars="--deed-color=${escapeHtml(player.color)}"></div><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">${isMe ? 'YOU' : 'PLAYER'}</p><h2 id="player-title">${escapeHtml(player.name)}</h2><p class="muted">${status}</p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div class="dialog-facts"><div><small>Cash</small><strong>${player.bankrupt ? '—' : money.format(player.balance)}</strong></div><div><small>Net worth</small><strong>${money.format(row.total)}</strong></div><div><small>Can raise</small><strong>${money.format(row.raisable)}</strong></div></div><p class="fine-print sheet-breakdown">Net worth = ${money.format(row.cash)} cash + ${money.format(row.property)} deeds + ${money.format(row.buildings)} buildings (resale).</p>${deeds.length ? `<h3 class="sheet-heading">${deeds.length} deed${deeds.length === 1 ? '' : 's'}</h3><ul class="sheet-deeds">${deedRows}</ul>` : '<p class="muted">No deeds.</p>'}${actions ? `<div class="dialog-actions sheet-actions">${actions}</div>` : ''}</div>`;
+  applyStyleVars($('#player-content'));
+  $$('[data-sheet]', $('#player-content')).forEach((button) => button.addEventListener('click', async () => {
+    const action = button.dataset.sheet;
+    if (action === 'deeds') {
+      $('#player-dialog').close();
+      deedOwnerFilter = player.id;
+      switchView('deeds');
+      renderDeeds();
+    } else if (action === 'pay') {
+      $('#player-dialog').close();
+      switchView('pay');
+      $('#payment-from').value = player.id;
+      $('#payment-amount').focus();
+    } else if (action === 'me') {
+      $('#player-dialog').close();
+      chooseIdentity(player.id);
+    } else if (action === 'jail') {
+      await submitAction({ type: 'jail', playerId: player.id, inJail: !player.inJail }, player.inJail ? `${player.name} is out of jail.` : `${player.name} went to jail.`);
+    }
+  }));
 }
 
 function openIdentity() {
@@ -392,39 +485,6 @@ function renderRules() {
   $('#preset-land-go').hidden = !rules().doubleGoOnLanding;
 }
 
-function renderPlayers() {
-  $('#total-cash').textContent = `${game.players.length} at the table`;
-  const jailRule = rules().noRentInJail;
-  const cards = orderedPlayers().map((player) => {
-    const index = seatOf(player);
-    const deeds = Object.values(game.deeds).filter((deed) => deed.ownerId === player.id).length;
-    const worth = standingFor(player.id)?.total ?? player.balance;
-    const winner = game.status === 'ended' && game.winnerIds.includes(player.id);
-    const status = player.bankrupt ? 'Bankrupt' : winner ? 'Winner' : player.inJail && jailRule ? 'In jail · no rent' : player.balance < 0 ? 'Needs attention' : 'Ready to play';
-    const meta = player.bankrupt ? 'Out of the game' : `${deeds} deed${deeds === 1 ? '' : 's'} · Net worth ${money.format(worth)}`;
-    if (player.bankrupt) {
-      return `<article class="player-card bankrupt" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong></div><div class="balance">Bankrupt</div><div class="player-meta">${meta}</div></article>`;
-    }
-    const jailButton = jailRule && game.status !== 'ended' ? `<button type="button" class="jail-toggle" data-jail-player="${player.id}" aria-pressed="${player.inJail ? 'true' : 'false'}">${player.inJail ? 'Release from jail' : 'Send to jail'}</button>` : '';
-    const isMe = player.id === mePlayer()?.id;
-    return `<article class="player-card ${player.inJail && jailRule ? 'in-jail' : ''} ${winner ? 'winner' : ''} ${isMe ? 'is-me' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><div class="player-card-head"><span class="mini-token">${TOKEN_LABELS[index]}</span><strong>${escapeHtml(player.name)}</strong>${isMe ? '<span class="you-badge">You</span>' : ''}</div><div class="balance">${money.format(player.balance)}</div><div class="player-meta">${meta}</div><div class="player-status">${status}</div>${jailButton}</article>`;
-  });
-  if (rules().freeParkingJackpot) {
-    cards.push(`<article class="player-card parking-card" data-vars="--player-color=#d6b661"><div class="player-card-head"><span class="mini-token">P</span><strong>Free Parking</strong></div><div class="balance">${money.format(game.freeParking || 0)}</div><form class="parking-form" id="parking-form"><label class="sr-only" for="parking-winner">Who landed on Free Parking?</label><select id="parking-winner">${optionList()}</select><button type="submit" ${game.freeParking ? '' : 'disabled'}>Collect</button></form></article>`);
-  }
-  $('#player-cards').innerHTML = cards.join('');
-  $('#player-cards').classList.toggle('crowded', game.players.length > 4);
-  applyStyleVars($('#player-cards'));
-  $$('[data-jail-player]').forEach((button) => button.addEventListener('click', () => {
-    const target = playerById(button.dataset.jailPlayer);
-    submitAction({ type: 'jail', playerId: target.id, inJail: !target.inJail }, target.inJail ? `${target.name} is out of jail.` : `${target.name} went to jail.`);
-  }));
-  $('#parking-form')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const winner = playerById($('#parking-winner').value);
-    submitAction({ type: 'collect-parking', playerId: winner.id }, `${winner.name} collected Free Parking.`);
-  });
-}
 
 function optionList({ includeBank = false, includeParking = false, selected = '' } = {}) {
   const values = [
@@ -489,34 +549,14 @@ function renderBankruptcyPreview() {
   $('#bankrupt-submit-label').textContent = `Declare ${debtor.name} bankrupt`;
 }
 
-// Owner pills on the Deeds tab: All, each active player (this phone's first), and the Bank.
-let deedOwnerFilter = 'all';
-
-function renderOwnerPills() {
-  const owners = orderedPlayers(activePlayers());
-  if (deedOwnerFilter !== 'all' && deedOwnerFilter !== 'bank' && !owners.some((player) => player.id === deedOwnerFilter)) deedOwnerFilter = 'all';
-  const count = (ownerId) => game.properties.filter((property) => (game.deeds[property.id].ownerId || 'bank') === ownerId).length;
-  const pill = (id, label, deeds, color = '', token = '') => `<button type="button" class="owner-pill ${deedOwnerFilter === id ? 'active' : ''}" data-owner="${id}" aria-pressed="${deedOwnerFilter === id}" ${color ? `data-vars="--player-color=${escapeHtml(color)}"` : ''}>${token ? `<span class="pill-token" aria-hidden="true">${token}</span>` : ''}<span>${escapeHtml(label)}</span><small>${deeds}</small></button>`;
-  $('#owner-pills').innerHTML = [
-    pill('all', 'All', game.properties.length),
-    ...owners.map((player) => pill(player.id, player.id === mePlayer()?.id ? `${player.name} (you)` : player.name, count(player.id), player.color, TOKEN_LABELS[seatOf(player)])),
-    pill('bank', 'Bank', count('bank'), '#64716b', '$')
-  ].join('');
-  applyStyleVars($('#owner-pills'));
-  $$('[data-owner]', $('#owner-pills')).forEach((button) => button.addEventListener('click', () => {
-    deedOwnerFilter = button.dataset.owner;
-    renderDeeds();
-  }));
-}
 
 function renderDeeds() {
-  renderOwnerPills();
   const query = $('#deed-search').value.toLowerCase();
   const filter = $('#deed-filter').value;
   const filtered = game.properties.filter((property) => {
     const deed = game.deeds[property.id];
     const matchesQuery = property.name.toLowerCase().includes(query);
-    const matchesFilter = filter === 'all' || (filter === 'available' && !deed.ownerId) || (filter === 'owned' && deed.ownerId) || (filter === 'mortgaged' && deed.mortgaged) || (filter === 'mine' && deed.ownerId && deed.ownerId === mePlayer()?.id);
+    const matchesFilter = filter === 'all' || (filter === 'available' && !deed.ownerId) || (filter === 'owned' && deed.ownerId) || (filter === 'mortgaged' && deed.mortgaged);
     const matchesOwner = deedOwnerFilter === 'all' || (deed.ownerId || 'bank') === deedOwnerFilter;
     return matchesQuery && matchesFilter && matchesOwner;
   });
@@ -576,20 +616,12 @@ function renderLedger() {
   $('#full-ledger').innerHTML = items.length || filter === 'all' ? ledgerHtml(items) : `<div class="empty-state">No activity for ${escapeHtml(name)} yet.</div>`;
 }
 
-// Compact balances shown at the top of every tab (stays visible while scrolling).
-function renderBalanceStrip() {
-  const chips = orderedPlayers().map((player) => {
-    const isMe = player.id === mePlayer()?.id;
-    return `<span class="balance-chip ${isMe ? 'is-me' : ''} ${player.bankrupt ? 'bankrupt' : ''}" data-vars="--player-color=${escapeHtml(player.color)}"><span class="mini-token" aria-hidden="true">${TOKEN_LABELS[seatOf(player)]}</span><span><small>${escapeHtml(player.name)}${isMe ? ' · you' : ''}</small><b>${player.bankrupt ? 'Bankrupt' : money.format(player.balance)}</b></span></span>`;
-  });
-  if (rules().freeParkingJackpot) chips.push(`<span class="balance-chip parking" data-vars="--player-color=#d6b661"><span class="mini-token" aria-hidden="true">P</span><span><small>Free Parking</small><b>${money.format(game.freeParking || 0)}</b></span></span>`);
-  $('#balance-strip').innerHTML = chips.join('');
-  applyStyleVars($('#balance-strip'));
-}
 
-function switchView(view) {
+function switchView(view, { scroll = true } = {}) {
   if (isSpectator() && ['pay', 'trade'].includes(view)) view = 'ledger';
+  const changed = view !== activeView;
   activeView = view;
+  if (game) renderPlayersBar();
   $$('.console-view').forEach((panel) => panel.hidden = panel.id !== `${view}-view`);
   $$('.view-tabs button').forEach((button) => {
     const active = button.dataset.view === view;
@@ -597,7 +629,8 @@ function switchView(view) {
     button.setAttribute('aria-selected', String(active));
   });
   $$('#mobile-nav button').forEach((button) => button.classList.toggle('active', button.dataset.mobileView === view));
-  if (innerWidth < 761) $('.console-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  // Phones: start each tab at the top (the players bar stays pinned).
+  if (scroll && changed && innerWidth < 761) scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
 async function submitAction(action, successMessage) {
@@ -906,7 +939,8 @@ function bindEvents() {
   $('#bankrupt-form').addEventListener('submit', declareBankruptcy);
   $('#bankrupt-player').addEventListener('change', renderCreditors);
   $('#ledger-filter').addEventListener('change', renderLedger);
-  ['#qr-dialog', '#results-dialog', '#identity-dialog', '#raise-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
+  $('#player-dialog').addEventListener('close', () => { sheet = null; });
+  ['#qr-dialog', '#results-dialog', '#identity-dialog', '#raise-dialog', '#player-dialog'].forEach((selector) => $(selector).addEventListener('click', (event) => {
     if (event.target === $(selector) || event.target.closest('[data-close-dialog]')) $(selector).close();
   }));
   $('#deed-dialog').addEventListener('click', (event) => { if (event.target === $('#deed-dialog')) $('#deed-dialog').close(); });
