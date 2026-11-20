@@ -28,7 +28,7 @@
           <h1>Your game.<br><em>One shared bank.</em></h1>
           <p>Replace paper cash with a fast, shared companion built for the table—not the spreadsheet.</p>
           <div class="feature-strip" aria-label="Features">
-            <span>⚡ Instant transfers</span><span>⌂ Deed manager</span><span>↗ Shareable game link</span><span>⚙ House rules</span>
+            <span>⚡ Instant transfers</span><span>⌂ Deed manager</span><span>↗ Shareable link &amp; QR</span><span>⚙ House rules</span>
           </div>
           <div class="table-art" aria-hidden="true">
             <div class="board-card card-a"><span></span><b>BOARDWALK</b><small>$400</small></div>
@@ -68,8 +68,14 @@
       <section id="game-screen" class="game-layout" hidden>
         <div class="game-head">
           <div><p class="eyebrow"><span></span> GAME NIGHT</p><h1>Banker’s Console</h1><p class="rules-line" id="rules-line"></p></div>
-          <button class="share-button" id="share-game" type="button">↗ <span>Share game</span></button>
+          <div class="head-actions">
+            <button class="share-button" id="share-game" type="button">↗ <span>Share game</span></button>
+            <button class="share-button" id="show-qr" type="button" aria-label="Show a QR code to join this game">▦ <span>QR code</span></button>
+            <button class="share-button" id="sound-toggle" type="button" aria-pressed="true" aria-label="Payment sounds and vibration">🔊 <span>Sound</span></button>
+            <button class="share-button" id="end-game" type="button">★ <span>End game</span></button>
+          </div>
         </div>
+        <div class="ended-banner" id="ended-banner" role="status" hidden><strong id="ended-text"></strong><button type="button" id="view-results">View results</button></div>
 
         <section class="balance-ribbon" aria-labelledby="players-title">
           <div class="section-label"><h2 id="players-title">Players</h2><span id="total-cash"></span></div>
@@ -104,6 +110,17 @@
                 <label class="field"><span>Note <small>optional</small></span><input id="payment-note" maxlength="120" placeholder="Rent, card, side deal…"></label>
                 <button class="primary-button full" type="submit"><span>TRANSFER FUNDS</span><span aria-hidden="true">→</span></button>
               </form>
+              <details class="bankruptcy">
+                <summary>Declare bankruptcy</summary>
+                <form id="bankrupt-form" class="action-form">
+                  <p class="muted">For a player who can’t pay what they owe. Their buildings are sold to the Bank at half price; their cash and deeds go to the creditor, or back to the Bank. They leave the game, and the last player standing wins.</p>
+                  <div class="account-row two-up">
+                    <label class="field"><span>Player</span><select id="bankrupt-player" required></select></label>
+                    <label class="field"><span>Owes</span><select id="bankrupt-creditor" required></select></label>
+                  </div>
+                  <button class="danger-button full" type="submit">DECLARE BANKRUPTCY</button>
+                </form>
+              </details>
             </div>
 
             <div id="deeds-view" class="console-view" hidden>
@@ -129,13 +146,13 @@
             </div>
 
             <div id="ledger-view" class="console-view" hidden>
-              <div class="view-heading"><div><p class="kicker">BANK RECORD</p><h2>Activity</h2></div><div class="bank-seal">≡</div></div>
+              <div class="view-heading"><div><p class="kicker">BANK RECORD</p><h2>Activity</h2></div><button type="button" class="undo-button" data-undo hidden>↶ Undo</button></div>
               <div id="full-ledger" class="ledger-list"></div>
             </div>
           </section>
 
           <aside class="activity-panel">
-            <div class="section-label"><h2>Latest activity</h2><button type="button" data-open-view="ledger">View all</button></div>
+            <div class="section-label"><h2>Latest activity</h2><span class="section-actions"><button type="button" class="undo-link" data-undo hidden>↶ Undo</button><button type="button" data-open-view="ledger">View all</button></span></div>
             <div id="mini-ledger" class="ledger-list compact"></div>
             <div class="session-card"><span class="live-dot"></span><div><strong>Shared session</strong><small>Anyone with this game link can bank.</small></div></div>
           </aside>
@@ -152,6 +169,8 @@
   </div>
 
   <dialog id="deed-dialog" class="deed-dialog"><div id="deed-dialog-content"></div></dialog>
+  <dialog id="qr-dialog" class="deed-dialog" aria-labelledby="qr-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">JOIN THIS GAME</p><h2 id="qr-title">Scan to join</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div id="qr-code" class="qr-code"></div><p class="qr-url" id="qr-url"></p><button type="button" class="secondary-button full" id="qr-copy">Copy link</button></div></dialog>
+  <dialog id="results-dialog" class="deed-dialog" aria-labelledby="results-title"><div id="results-content"></div></dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="/app.js"></script>
 </body>
