@@ -21,16 +21,15 @@ Priorities:
 | **Net worth & end-game summary** (#8) | PR #5 | Net worth on player cards; End game → results dialog with standings and stats; undo reopens the game. |
 | **QR code to join** (#12) | PR #5 | Dependency-free encoder in `public/qr.js` (versions 1–10, L/M/Q/H), verified against an independent decoder and the ISO worked example. |
 | **Sound & haptics** (#24) | PR #5 | Chime + vibration on payments (local and from other devices); per-device toggle. |
+| **Durable game storage** (#1) | PR #7 | Azure Files share mounted at `/data`; one JSON file per game written atomically after every action; games and undo history survive restarts and deploys; the deploy verifies a probe game survives. |
+| **Abuse limits** (#3) | PR #7 | 20 new games/hour and 600 API requests/minute per IP (429 + `Retry-After`), 5,000 active-game cap (503), `TRUST_PROXY` for `X-Forwarded-For`. |
 | Header and bankruptcy redesign | PR #6 | One sticky header on every page (Start a game / live badge, game code and actions); bankruptcy as a danger-zone card with a "What happens" preview. |
 
 ## Backlog
 
 ### P0: trust and data loss
 
-| # | Feature | Why | Effort | Notes / acceptance |
-| --- | --- | --- | --- | --- |
-| 1 | **Durable game storage** | Every deploy to `main` wipes all live games (in-memory store). | M | Azure Table Storage (cheap) behind the `GameStore` interface; write after each action; reload on start. **Requires approval:** changes the "in-memory only" rule in `CLAUDE.md`, adds an Azure resource and cost, and the deploy identity cannot assign data-plane roles (use a connection string secret or Bicep `listKeys`). Keep TTL cleanup. Undo history must persist too, or be explicitly dropped on restart. |
-| 3 | **Abuse limits** | Unlimited game creation can exhaust memory. | S | Cap active games (e.g. 5,000) and add per-IP creation rate limits (e.g. 20/hour) with HTTP 429; tests for both. |
+All P0 items have shipped (#1 and #3 in PR #7). New P0s go here.
 
 ### P1: rule gaps and table speed
 
@@ -68,5 +67,4 @@ Priorities:
 
 ## Decisions needed
 
-- **#1 Durable storage:** approve the architecture change and Azure cost.
 - **Dependencies:** the repo forbids them. #25 might want one. (The QR code was built without one.)
