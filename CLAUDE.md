@@ -1,6 +1,11 @@
 # MonoBank — repository guide
 
-MonoBank is a mobile-first shared banking companion for a classic property-trading board game. Players open a game, share its URL, and move money, manage deeds, collect rent, trade, mortgage, and build from any device. It is an unofficial fan-made companion: never use Hasbro/Monopoly branding, artwork, or trademarked edition names in code, UI, or docs.
+MonoBank is a mobile-first shared banking companion for a classic property-trading board game. Players open a game, share its URL, and move money, manage deeds, collect rent, trade, mortgage, and build from any device. It is an unofficial fan-made companion.
+
+**Branding and trademark rules:** MONOPOLY® is a registered trademark of Hasbro, Inc.
+- You **may** name Monopoly descriptively (nominative use): "unofficial Monopoly® banker", "for Monopoly game night". Use ® on the first prominent mention in a view.
+- Every page must show the disclaimer (footer `.site-footer .trademark`): *"MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc."* Keep the README notice in sync.
+- **Never** use Hasbro's logos, artwork, fonts, mascots, box or board imagery, trademarked edition names, or wording that implies an official or endorsed product. Never put "Monopoly" in the product name; it stays **MonoBank**.
 
 ## Commands
 
@@ -26,7 +31,7 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 | `lib/store.mjs` | `GameStore`: in-memory working copy with optional write-through to `DATA_DIR/<id>.json` (atomic writes, per-game write queue, load de-duplication, 24 h TTL sweep, `maxGames` cap). |
 | `lib/rate-limit.mjs` | Fixed-window `RateLimiter` used by the server for per-IP limits. |
 | `lib/properties.mjs` | Deed data (28 classic U.S. deeds) and color groups. |
-| `public/` | Vanilla JS single-page client (`app.js`), `index.html`, `styles.css`, PWA manifest. No build step. |
+| `public/` | Vanilla JS single-page client (`app.js`), `index.html`, `styles.css`, PWA manifest, `robots.txt`, `sitemap.xml`, `og-image.jpg` (1200×630 share image). No build step. |
 | `public/qr.js` | Dependency-free QR encoder (byte mode, versions 1–10). Shared by the browser and Node tests. |
 | `test/*.test.mjs` | `game` (core + house rules), `rules` (rent/building/trade/validation), `features` (undo, bankruptcy, net worth, end game), `qr`, `server` (HTTP, errors, static files), `store` (persistence, restarts, TTL, capacity, I/O failures), `limits` (rate limiting, proxy trust, configuration, restart survival). |
 | `e2e/ui.e2e.mjs` | Browser end-to-end test of the main flows; not part of `npm test`. |
@@ -59,6 +64,12 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 - `styles.css` is compact (one block per line); append new rules in the same style, and delete rules that a change makes unused.
 - **Layout:** the sticky `.topbar` is the only header on every page and stays minimal: brand on the left; on a game, `#game-actions` adds the live `.game-chip` (`#session-code`), the gold **Invite** button (`#show-qr`), and the **⋯** overflow menu (`#menu-button` → `#game-menu`, `role="menu"`) holding Copy game link, Sound & vibration (`menuitemcheckbox`), and End game. New game-wide actions go **in the menu**, not as new header buttons. `setMenu()` handles open/close; the menu closes on item click, outside click, and Escape, and supports arrow keys.
 - **Destructive actions** (like bankruptcy) live in a collapsed danger-zone card, show a plain-language preview of the outcome, name the affected player on the confirm button, and remind the user that Undo can reverse them.
+
+## SEO
+
+- `index.html` `<head>` carries the title (≤ 60 chars), meta description (120–170 chars, checked by tests), canonical `https://monobank.divviq.app/`, Open Graph and Twitter card tags pointing at `/og-image.jpg`, and a `WebApplication` JSON-LD block (a data block, so it is allowed by the CSP).
+- Game pages are private sessions: the server sends `X-Robots-Tag: noindex, nofollow` for `/game/*` and `noindex` for API responses; `robots.txt` disallows `/game/` and `/api/`. `app.js` sets `document.title` to `Game XXXX · MonoBank` in a game and restores the home title on the setup screen.
+- If the domain changes, update the canonical URL, `og:url`/`og:image`, JSON-LD `url`/`image`, `robots.txt` and `sitemap.xml` together. Regenerate `og-image.jpg` (no Hasbro artwork) if the headline changes.
 
 ## Deployment
 

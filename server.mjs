@@ -14,7 +14,8 @@ export const DEFAULT_LIMITS = Object.freeze({ createPerHour: 20, apiPerMinute: 6
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json'
+  '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json',
+  '.jpg': 'image/jpeg', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8'
 };
 
 const securityHeaders = {
@@ -26,7 +27,7 @@ const securityHeaders = {
 };
 
 function sendJson(res, status, value, headers = {}) {
-  res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+  res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', ...headers });
   res.end(JSON.stringify(value));
 }
 
@@ -102,7 +103,9 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
         ...securityHeaders,
         'Content-Type': MIME[extension] || 'application/octet-stream',
         'Cache-Control': 'no-cache',
-        ETag: etag
+        ETag: etag,
+        // Game links are private sessions: keep them out of search results.
+        ...(url.pathname.startsWith('/game/') ? { 'X-Robots-Tag': 'noindex, nofollow' } : {})
       };
       if (req.headers['if-none-match'] === etag) {
         res.writeHead(304, headers);

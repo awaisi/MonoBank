@@ -1,8 +1,10 @@
 # MonoBank
 
-MonoBank is a mobile-first, shared banking companion for a classic property-trading board game. It replaces paper cash with instant transfers, a complete deed desk, automatic rent calculations, trades, mortgages, buildings, and an auditable activity feed.
+**MonoBank is a free, unofficial digital banker for Monopoly® game night.** Everyone at the table shares one live bank on their phones, replacing the paper money with instant payments, a complete deed desk, automatic rent, trades, mortgages, buildings and an auditable activity feed. Bring your own board game; MonoBank handles the banking.
 
-> MonoBank is an unofficial fan-made companion and is not affiliated with or endorsed by Hasbro.
+Live at **https://monobank.divviq.app**.
+
+> MonoBank is an independent, unofficial fan-made app. It is not affiliated with, sponsored or endorsed by Hasbro, Inc. MONOPOLY® is a registered trademark of Hasbro, Inc.
 
 ## Highlights
 
@@ -19,7 +21,7 @@ MonoBank is a mobile-first, shared banking companion for a classic property-trad
 - **QR code** to join a game from another phone.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
-- Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **End game**.
+- Use an accessible responsive UI designed as a tableside game console. A minimal sticky header shows the brand and the tagline “Unofficial Monopoly® banker”; on a game it adds the live game code, **Invite** (QR code and link), and a **⋯** menu with **Copy game link**, **Sound & vibration**, and **End game**.
 - Games are saved durably and survive restarts and deploys; they expire after 24 hours of inactivity.
 - Built-in abuse protection: per-IP rate limits and a cap on active games.
 
@@ -239,6 +241,12 @@ The workflow can also be run manually from **Actions → Build, test, and deploy
 API errors use JSON `{ "error": "…" }` with status 400 (invalid input), 404 (unknown or expired game), 409 (stale revision), 413 (body too large), 429 (rate limited, with `Retry-After`), 503 (at capacity), or 500.
 
 The client sends an expected revision with each action. A stale browser receives HTTP 409 and refreshes instead of silently overwriting a newer transaction.
+
+## Branding and SEO
+
+- **Positioning:** the header tagline, hero (“Ditch the paper money. Run the bank from your phone.”) and page title all say what MonoBank is: an unofficial banker for Monopoly game night. The trademark disclaimer appears in the footer of every page.
+- **Search and sharing:** a descriptive `<title>` and meta description, canonical URL, Open Graph and Twitter card tags with a 1200×630 share image (`/og-image.jpg`), `WebApplication` structured data (JSON-LD), `robots.txt` and `sitemap.xml`.
+- **Private games stay out of search:** `/game/*` pages are served with `X-Robots-Tag: noindex, nofollow`, API responses with `noindex`, and `robots.txt` disallows both.
 
 ## Security and accessibility
 

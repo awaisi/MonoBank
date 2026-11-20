@@ -198,6 +198,8 @@ function showSetup() {
   $('#setup-screen').hidden = false;
   $('#game-screen').hidden = true;
   $('#game-actions').hidden = true;
+  document.body.classList.remove('in-game');
+  document.title = 'MonoBank: Unofficial Monopoly Banker App – No Paper Money';
   setMenu(false);
   $('#mobile-nav').hidden = true;
   clearInterval(pollTimer);
@@ -207,6 +209,8 @@ function showGame() {
   $('#setup-screen').hidden = true;
   $('#game-screen').hidden = false;
   $('#game-actions').hidden = false;
+  document.body.classList.add('in-game');
+  document.title = `Game ${game.id.slice(0, 4).toUpperCase()} · MonoBank`;
   $('#session-code').textContent = game.id.slice(0, 4).toUpperCase();
   $('#session-badge').title = `Live game ${game.id}`;
   $('#mobile-nav').hidden = false;

@@ -34,6 +34,14 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(await page.isVisible('#game-actions'), false);
   });
 
+  await t.test('says what MonoBank is and shows the trademark disclaimer', async () => {
+    assert.equal(await page.title(), 'MonoBank: Unofficial Monopoly Banker App – No Paper Money');
+    assert.equal(await page.textContent('.brand-tagline'), 'Unofficial Monopoly® banker');
+    assert.match(await page.textContent('#setup-screen h1'), /Ditch the paper money/);
+    assert.match(await page.textContent('.site-footer .trademark'), /not affiliated with, sponsored or endorsed by Hasbro, Inc\. MONOPOLY® is a registered trademark of Hasbro, Inc\./);
+    assert.equal(await page.isVisible('.site-footer'), true);
+  });
+
   await t.test('serves fresh assets: no-cache with ETag revalidation', async () => {
     const response = await page.request.get(`${base}/styles.css`);
     assert.equal(response.headers()['cache-control'], 'no-cache');
@@ -57,6 +65,11 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.waitForSelector('#game-screen:not([hidden])');
     assert.match(await page.textContent('#rules-line'), /Free Parking jackpot \(seeded \$100\)/);
     assert.deepEqual(await balances(), ['$1,500', '$1,500', '$1,500', '$100']);
+  });
+
+  await t.test('game pages keep the disclaimer and get their own title', async () => {
+    assert.match(await page.title(), /^Game [0-9A-F]{4} · MonoBank$/);
+    assert.match(await page.textContent('.site-footer .trademark'), /Hasbro, Inc\./);
   });
 
   await t.test('game header shows the game code, Invite, and a menu', async () => {

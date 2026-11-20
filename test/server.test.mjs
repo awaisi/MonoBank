@@ -114,3 +114,37 @@ test('blocks path traversal outside public/', async (t) => {
     assert.notEqual(response.status, 200, path);
   }
 });
+
+test('serves SEO metadata, crawler files and the share image', async (t) => {
+  const { base, json } = await startServer(t);
+  const html = await (await fetch(`${base}/`)).text();
+  assert.match(html, /<title>MonoBank: Unofficial Monopoly Banker App – No Paper Money<\/title>/);
+  const description = html.match(/<meta name="description" content="([^"]+)">/)[1];
+  assert.ok(description.length >= 120 && description.length <= 170, `description length ${description.length}`);
+  assert.match(html, /<link rel="canonical" href="https:\/\/monobank\.divviq\.app\/">/);
+  for (const property of ['og:title', 'og:description', 'og:url', 'og:image', 'og:type']) assert.match(html, new RegExp(`property="${property}" content="[^"]+"`), property);
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  const ld = JSON.parse(html.match(/<script type="application\/ld\+json">(.+?)<\/script>/)[1]);
+  assert.equal(ld['@type'], 'WebApplication');
+  assert.equal(ld.offers.price, '0');
+  assert.match(html, /not affiliated with, sponsored or endorsed by Hasbro, Inc\. MONOPOLY® is a registered trademark of Hasbro, Inc\./);
+
+  const robots = await fetch(`${base}/robots.txt`);
+  assert.match(robots.headers.get('content-type'), /text\/plain/);
+  const robotsText = await robots.text();
+  assert.match(robotsText, /Disallow: \/game\//);
+  assert.match(robotsText, /Sitemap: https:\/\/monobank\.divviq\.app\/sitemap\.xml/);
+  const sitemap = await fetch(`${base}/sitemap.xml`);
+  assert.match(sitemap.headers.get('content-type'), /application\/xml/);
+  assert.match(await sitemap.text(), /<loc>https:\/\/monobank\.divviq\.app\/<\/loc>/);
+  const image = await fetch(`${base}/og-image.jpg`);
+  assert.equal(image.headers.get('content-type'), 'image/jpeg');
+  const bytes = new Uint8Array(await image.arrayBuffer());
+  assert.deepEqual([...bytes.slice(0, 2)], [0xff, 0xd8], 'JPEG signature');
+  const manifest = await (await fetch(`${base}/manifest.webmanifest`)).json();
+  assert.match(manifest.name, /Unofficial Monopoly Banker/);
+
+  assert.equal((await fetch(`${base}/`)).headers.get('x-robots-tag'), null, 'home page is indexable');
+  assert.equal((await fetch(`${base}/game/0123456789abcdef`)).headers.get('x-robots-tag'), 'noindex, nofollow');
+  assert.equal((await json('/api/games', { players: ['A', 'B'] })).headers.get('x-robots-tag'), 'noindex');
+});
