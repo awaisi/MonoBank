@@ -19,7 +19,7 @@ MonoBank is a mobile-first, shared banking companion for a classic property-trad
 - **QR code** to join a game from another phone.
 - **Payment sounds and vibration**, with a per-device on/off toggle.
 - Trade deeds and cash in one atomic transaction.
-- Use an accessible responsive UI designed as a tableside game console.
+- Use an accessible responsive UI designed as a tableside game console, with one sticky header on every page: **Start a game** on the home page; on a game, a live badge with the game code plus **Share**, **QR code**, **Sound** and **End game**.
 - Keep sessions in server memory for 24 hours after the latest activity.
 
 ## Run locally
@@ -63,14 +63,14 @@ The project has no dependencies; the e2e test loads Playwright only if it is alr
 ## Undo, bankruptcy, and ending a game
 
 - **Undo:** the **↶ Undo** button (Activity panel and Activity tab) reverses the most recent action: payments, purchases, rent, mortgages, buildings, trades, jail, Free Parking, bankruptcy, or game over. Press it again to keep going back, up to 50 actions. Every action is also atomic: if it fails, nothing changes.
-- **Bankruptcy:** under **Quick pay → Declare bankruptcy**, choose the player and who they owe. Their houses and hotels are sold to the Bank at half price. Their cash (if positive) and deeds go to the creditor; mortgaged deeds stay mortgaged. If they owe the Bank, deeds return to the Bank unmortgaged. A negative balance is written off. The player leaves the game, and when only one player remains they win automatically.
+- **Bankruptcy:** open the **Bankruptcy** card at the bottom of **Quick pay** and choose the bankrupt player and who they owe. A **What happens** preview spells out the settlement before you confirm (building sale proceeds, cash and deeds handed over, any debt written off, and whether this ends the game). Their houses and hotels are sold to the Bank at half price. Their cash (if positive) and deeds go to the creditor; mortgaged deeds stay mortgaged. If they owe the Bank, deeds return to the Bank unmortgaged. A negative balance is written off. The player leaves the game, and when only one player remains they win automatically.
 - **Net worth:** cash + deeds at list price (mortgaged deeds at their mortgage value) + houses and hotels at cost. It's shown on each player card.
-- **End game:** **★ End game** declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
+- **End game:** **★ End game** in the header declares the highest net worth the winner (ties are shared) and opens the results screen: standings, game length, transaction count, and top rent collector. An ended game is read-only until someone undoes "Game over".
 
 ## Joining and feedback
 
-- **QR code:** **▦ QR code** shows a scannable code for the game link. It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
-- **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **🔊 Sound** turns this on or off for the current device.
+- **QR code:** **▦ QR code** in the header shows a scannable code for the game link. It's generated in the browser by a small built-in encoder, with no third-party service or dependency.
+- **Sound and vibration:** payments play a short chime, and phones that support it vibrate. That covers your own actions, changes from other devices, and errors. **🔊 Sound** in the header turns this on or off for the current device (it shows **Muted** when off).
 
 ## House rules
 

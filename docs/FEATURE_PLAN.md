@@ -21,6 +21,7 @@ Priorities:
 | **Net worth & end-game summary** (#8) | PR #5 | Net worth on player cards; End game → results dialog with standings and stats; undo reopens the game. |
 | **QR code to join** (#12) | PR #5 | Dependency-free encoder in `public/qr.js` (versions 1–10, L/M/Q/H), verified against an independent decoder and the ISO worked example. |
 | **Sound & haptics** (#24) | PR #5 | Chime + vibration on payments (local and from other devices); per-device toggle. |
+| Header and bankruptcy redesign | PR #6 | One sticky header on every page (Start a game / live badge, game code and actions); bankruptcy as a danger-zone card with a "What happens" preview. |
 
 ## Backlog
 
