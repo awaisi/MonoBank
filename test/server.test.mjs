@@ -93,7 +93,16 @@ test('serves the app shell, static assets and security headers', async (t) => {
   assert.match(await gameRoute.text(), /Banker’s Console/);
   const script = await fetch(`${base}/qr.js`);
   assert.match(script.headers.get('content-type'), /text\/javascript/);
-  assert.match(script.headers.get('cache-control'), /max-age=3600/);
+  assert.equal(script.headers.get('cache-control'), 'no-cache', 'assets are revalidated after every deploy');
+  const etag = script.headers.get('etag');
+  assert.match(etag, /^"[\w-]+"$/);
+  const revalidated = await fetch(`${base}/qr.js`, { headers: { 'if-none-match': etag } });
+  assert.equal(revalidated.status, 304);
+  assert.equal(await revalidated.text(), '');
+  const stale = await fetch(`${base}/qr.js`, { headers: { 'if-none-match': '"old"' } });
+  assert.equal(stale.status, 200);
+  const versioned = await fetch(`${base}/styles.css?v=3`);
+  assert.equal(versioned.status, 200, 'cache-busting query strings are ignored by the router');
   const manifest = await fetch(`${base}/manifest.webmanifest`);
   assert.match(manifest.headers.get('content-type'), /manifest\+json/);
 });

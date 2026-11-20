@@ -8,7 +8,7 @@
   <title>MonoBank — Tabletop Banker</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=3">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -16,20 +16,19 @@
     <header class="topbar">
       <a class="brand" href="/" aria-label="MonoBank home">
         <span class="brand-mark" aria-hidden="true">M</span>
-        <span class="brand-text"><strong>MONOBANK</strong><small>TABLESIDE BANKER</small></span>
+        <span class="brand-name">MonoBank</span>
       </a>
-      <div class="topbar-home" id="home-actions">
-        <span class="topbar-note">Unofficial fan-made companion</span>
-        <button type="button" class="topbar-cta" id="start-cta">Start a game <span aria-hidden="true">→</span></button>
-      </div>
       <div class="topbar-game" id="game-actions" hidden>
-        <div class="session-badge" id="session-badge"><span class="live-dot"></span><span>LIVE</span><span class="session-code" id="session-code"></span></div>
-        <nav class="topbar-actions" aria-label="Game actions">
-          <button class="topbar-action" id="share-game" type="button" title="Copy the game link"><span aria-hidden="true">↗</span><span class="action-label">Share</span></button>
-          <button class="topbar-action" id="show-qr" type="button" title="Show a QR code to join" aria-label="QR code to join"><span aria-hidden="true">▦</span><span class="action-label">QR code</span></button>
-          <button class="topbar-action" id="sound-toggle" type="button" aria-pressed="true" aria-label="Payment sounds and vibration"><span aria-hidden="true">🔊</span><span class="action-label">Sound</span></button>
-          <button class="topbar-action accent" id="end-game" type="button" title="End the game and see results"><span aria-hidden="true">★</span><span class="action-label">End game</span></button>
-        </nav>
+        <span class="game-chip" id="session-badge"><span class="live-dot" aria-hidden="true"></span><span class="sr-only">Live game</span><span id="session-code"></span></span>
+        <button type="button" class="invite-button" id="show-qr" aria-label="Invite players with a QR code or link"><span aria-hidden="true">＋</span><span class="invite-label">Invite</span></button>
+        <div class="menu">
+          <button type="button" class="menu-button" id="menu-button" aria-haspopup="menu" aria-expanded="false" aria-controls="game-menu" aria-label="Game menu"><span aria-hidden="true"></span></button>
+          <div class="menu-panel" id="game-menu" role="menu" aria-label="Game menu" hidden>
+            <button type="button" role="menuitem" id="share-game"><span aria-hidden="true">↗</span>Copy game link</button>
+            <button type="button" role="menuitemcheckbox" id="sound-toggle" aria-checked="true"><span aria-hidden="true">🔊</span>Sound &amp; vibration</button>
+            <button type="button" role="menuitem" id="end-game" class="menu-danger"><span aria-hidden="true">★</span>End game</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -187,6 +186,6 @@
   <dialog id="qr-dialog" class="deed-dialog" aria-labelledby="qr-title"><div class="dialog-inner"><div class="dialog-head"><div><p class="kicker">JOIN THIS GAME</p><h2 id="qr-title">Scan to join</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></div><div id="qr-code" class="qr-code"></div><p class="qr-url" id="qr-url"></p><button type="button" class="secondary-button full" id="qr-copy">Copy link</button></div></dialog>
   <dialog id="results-dialog" class="deed-dialog" aria-labelledby="results-title"><div id="results-content"></div></dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=3"></script>
 </body>
 </html>

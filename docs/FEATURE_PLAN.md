@@ -23,6 +23,7 @@ Priorities:
 | **Sound & haptics** (#24) | PR #5 | Chime + vibration on payments (local and from other devices); per-device toggle. |
 | **Durable game storage** (#1) | PR #7 | Azure Files share mounted at `/data`; one JSON file per game written atomically after every action; games and undo history survive restarts and deploys; the deploy verifies a probe game survives. |
 | **Abuse limits** (#3) | PR #7 | 20 new games/hour and 600 API requests/minute per IP (429 + `Retry-After`), 5,000 active-game cap (503), `TRUST_PROXY` for `X-Forwarded-For`. |
+| Minimal header with overflow menu; asset caching fix | PR #7 | Brand-only home header; game header = live code + Invite + ⋯ menu (Copy link, Sound, End game). Static files now `no-cache` + `ETag`; PR #6 looked broken on phones because `styles.css`/`app.js` were cached for an hour while `index.html` was fresh. |
 | Header and bankruptcy redesign | PR #6 | One sticky header on every page (Start a game / live badge, game code and actions); bankruptcy as a danger-zone card with a "What happens" preview. |
 
 ## Backlog

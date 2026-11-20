@@ -28,12 +28,19 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   const toast = (text) => page.waitForSelector(`.toast:has-text("${text}")`);
   const balances = () => page.$$eval('#player-cards .player-card .balance', (cards) => cards.map((card) => card.textContent));
 
-  await t.test('home header offers "Start a game" and hides game actions', async () => {
+  await t.test('home header shows only the brand', async () => {
     await page.goto(base);
-    assert.equal(await page.isVisible('#home-actions'), true);
+    assert.equal(await page.isVisible('.topbar .brand'), true);
     assert.equal(await page.isVisible('#game-actions'), false);
-    await page.click('#start-cta');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'player-0');
+  });
+
+  await t.test('serves fresh assets: no-cache with ETag revalidation', async () => {
+    const response = await page.request.get(`${base}/styles.css`);
+    assert.equal(response.headers()['cache-control'], 'no-cache');
+    const etag = response.headers().etag;
+    assert.ok(etag);
+    const revalidated = await page.request.get(`${base}/styles.css`, { headers: { 'If-None-Match': etag } });
+    assert.equal(revalidated.status(), 304);
   });
 
   await t.test('creates a game with house rules', async () => {
@@ -52,12 +59,24 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.deepEqual(await balances(), ['$1,500', '$1,500', '$1,500', '$100']);
   });
 
-  await t.test('game header shows the live badge, game code and actions', async () => {
-    assert.equal(await page.isVisible('#home-actions'), false);
+  await t.test('game header shows the game code, Invite, and a menu', async () => {
     assert.equal(await page.isVisible('#game-actions'), true);
     const code = page.url().split('/').pop().slice(0, 4).toUpperCase();
     assert.equal(await page.textContent('#session-code'), code);
-    for (const id of ['#share-game', '#show-qr', '#sound-toggle', '#end-game']) assert.equal(await page.isVisible(id), true, id);
+    assert.equal(await page.isVisible('#show-qr'), true);
+    assert.equal(await page.isVisible('#game-menu'), false);
+    await page.click('#menu-button');
+    assert.equal(await page.getAttribute('#menu-button', 'aria-expanded'), 'true');
+    for (const id of ['#share-game', '#sound-toggle', '#end-game']) assert.equal(await page.isVisible(id), true, id);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'share-game', 'focus moves into the menu');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'sound-toggle');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isVisible('#game-menu'), false);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'menu-button');
+    await page.click('#menu-button');
+    await page.click('#game-screen h1');
+    assert.equal(await page.isVisible('#game-menu'), false, 'clicking outside closes the menu');
   });
 
   await t.test('player colors render through the CSP-safe path', async () => {
@@ -104,7 +123,19 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     assert.equal(fromOptions.includes('Ana'), false);
   });
 
+  await t.test('bankruptcy card is styled, not raw browser controls', async () => {
+    const styles = await page.$eval('.bankruptcy', (card) => {
+      const css = getComputedStyle(card);
+      const button = getComputedStyle(card.querySelector('.danger-button'));
+      return { radius: css.borderTopLeftRadius, background: css.backgroundColor, button: button.backgroundColor };
+    });
+    assert.equal(styles.radius, '14px');
+    assert.equal(styles.background, 'rgb(253, 245, 243)');
+    assert.equal(styles.button, 'rgb(178, 60, 53)');
+  });
+
   await t.test('ends the game and shows results, then undoes game over', async () => {
+    await page.click('#menu-button');
     await page.click('#end-game');
     await page.waitForSelector('#results-dialog[open]');
     assert.match(await page.textContent('#results-title'), /Cy wins/);
@@ -124,12 +155,14 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
   });
 
   await t.test('toggles and remembers the sound preference', async () => {
-    assert.equal(await page.getAttribute('#sound-toggle', 'aria-pressed'), 'true');
+    assert.equal(await page.getAttribute('#sound-toggle', 'aria-checked'), 'true');
+    await page.click('#menu-button');
     await page.click('#sound-toggle');
-    assert.equal(await page.getAttribute('#sound-toggle', 'aria-pressed'), 'false');
+    assert.equal(await page.getAttribute('#sound-toggle', 'aria-checked'), 'false');
+    assert.match(await page.textContent('#sound-toggle'), /Off$/);
     await page.reload();
     await page.waitForSelector('#game-screen:not([hidden])');
-    assert.equal(await page.getAttribute('#sound-toggle', 'aria-pressed'), 'false');
+    assert.equal(await page.getAttribute('#sound-toggle', 'aria-checked'), 'false');
   });
 
   await t.test('fits a 375 px phone without horizontal scrolling', async () => {

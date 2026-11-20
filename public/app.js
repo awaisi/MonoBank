@@ -198,7 +198,7 @@ function showSetup() {
   $('#setup-screen').hidden = false;
   $('#game-screen').hidden = true;
   $('#game-actions').hidden = true;
-  $('#home-actions').hidden = false;
+  setMenu(false);
   $('#mobile-nav').hidden = true;
   clearInterval(pollTimer);
 }
@@ -207,9 +207,8 @@ function showGame() {
   $('#setup-screen').hidden = true;
   $('#game-screen').hidden = false;
   $('#game-actions').hidden = false;
-  $('#home-actions').hidden = true;
   $('#session-code').textContent = game.id.slice(0, 4).toUpperCase();
-  $('#session-badge').title = `Game ${game.id}`;
+  $('#session-badge').title = `Live game ${game.id}`;
   $('#mobile-nav').hidden = false;
   renderGame();
   clearInterval(pollTimer);
@@ -485,9 +484,37 @@ function showQr() {
 
 function renderSoundToggle() {
   const button = $('#sound-toggle');
-  button.setAttribute('aria-pressed', String(feedback.enabled));
-  button.title = feedback.enabled ? 'Sound and vibration are on' : 'Sound and vibration are off';
-  button.innerHTML = `<span aria-hidden="true">${feedback.enabled ? '🔊' : '🔇'}</span><span class="action-label">${feedback.enabled ? 'Sound' : 'Muted'}</span>`;
+  button.setAttribute('aria-checked', String(feedback.enabled));
+  button.innerHTML = `<span aria-hidden="true">${feedback.enabled ? '🔊' : '🔇'}</span>Sound &amp; vibration<small>${feedback.enabled ? 'On' : 'Off'}</small>`;
+}
+
+// Header overflow menu (Copy link, Sound, End game).
+function setMenu(open, { focus = false } = {}) {
+  const menu = $('#game-menu');
+  menu.hidden = !open;
+  $('#menu-button').setAttribute('aria-expanded', String(open));
+  if (open && focus) $('[role^="menuitem"]:not([hidden])', menu)?.focus();
+}
+
+function bindMenu() {
+  const button = $('#menu-button');
+  const menu = $('#game-menu');
+  button.addEventListener('click', () => setMenu(menu.hidden, { focus: true }));
+  menu.addEventListener('click', (event) => { if (event.target.closest('[role^="menuitem"]')) setMenu(false); });
+  menu.addEventListener('keydown', (event) => {
+    const items = $$('[role^="menuitem"]:not([hidden])', menu);
+    const index = items.indexOf(document.activeElement);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !menu.hidden) { setMenu(false); button.focus(); }
+  });
+  document.addEventListener('click', (event) => {
+    if (!menu.hidden && !event.target.closest('.menu')) setMenu(false);
+  });
 }
 
 async function pay(event) {
@@ -609,10 +636,7 @@ function bindEvents() {
   renderSoundToggle();
   $('#end-game').addEventListener('click', endGame);
   $('#bankrupt-creditor').addEventListener('change', renderBankruptcyPreview);
-  $('#start-cta').addEventListener('click', () => {
-    $('.setup-card').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-    $('#player-0')?.focus({ preventScroll: true });
-  });
+  bindMenu();
   $('#view-results').addEventListener('click', openResults);
   $$('[data-undo]').forEach((button) => button.addEventListener('click', undoLast));
   $('#bankrupt-form').addEventListener('submit', declareBankruptcy);

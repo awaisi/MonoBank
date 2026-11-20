@@ -1,4 +1,5 @@
 import { createServer as createNodeServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,11 +95,20 @@ export function createAppServer({ store = new GameStore(), limits = {}, trustPro
       if (!filePath.startsWith(ROOT)) throw new GameError('Not found.', 404);
       const content = await readFile(filePath);
       const extension = extname(filePath);
-      res.writeHead(200, {
+      // Every asset is revalidated (cheap 304s via ETag) so a deploy can never
+      // leave browsers with new HTML but stale CSS or JavaScript.
+      const etag = `"${createHash('sha1').update(content).digest('base64url')}"`;
+      const headers = {
         ...securityHeaders,
         'Content-Type': MIME[extension] || 'application/octet-stream',
-        'Cache-Control': extension === '.html' ? 'no-cache' : 'public, max-age=3600'
-      });
+        'Cache-Control': 'no-cache',
+        ETag: etag
+      };
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, headers);
+        return res.end();
+      }
+      res.writeHead(200, headers);
       res.end(content);
     } catch (error) {
       if (error?.code === 'ENOENT') return sendJson(res, 404, { error: 'Not found.' });
