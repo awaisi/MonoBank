@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, performAction, publicGame, netWorth, standings, calculateRent } from '../lib/game.mjs';
+import { createGame, performAction, publicGame, spectatorView, netWorth, standings, calculateRent, playTime } from '../lib/game.mjs';
 
 const makeGame = (names = ['Ana', 'Ben', 'Cy'], options = {}) => createGame({ players: names, startingBalance: 1500, ...options });
 const act = (game, action) => performAction(game, action);
@@ -307,4 +307,60 @@ test('a single winner is named, and undo reopens an ended game', () => {
   assert.equal(game.endedAt, null);
   act(game, { type: 'transfer', fromId: ana.id, toId: ben.id, amount: 5 });
   assert.equal(ben.balance, 1506);
+});
+
+// ----------------------------------------------------------- play time ----
+
+test('play time runs from the first move to the last move before Finish game', () => {
+  const game = makeGame();
+  const [ana, ben] = game.players;
+  assert.equal(game.startedAt, null, 'opening the bank is not a move');
+  assert.equal(playTime(game), null, 'no play time while the game is running');
+  act(game, { type: 'transfer', fromId: ana.id, toId: ben.id, amount: 10 });
+  assert.equal(game.startedAt, game.transactions[0].at, 'the first move starts the clock');
+  act(game, { type: 'transfer', fromId: ben.id, toId: ana.id, amount: 5 });
+  // Pretend the table played from 7:00 to 8:35 and only pressed Finish much later.
+  game.startedAt = '2026-01-01T19:00:00.000Z';
+  game.transactions[0].at = '2026-01-01T20:35:00.000Z';
+  act(game, { type: 'end-game' });
+  assert.deepEqual(playTime(game), { startedAt: '2026-01-01T19:00:00.000Z', endedAt: '2026-01-01T20:35:00.000Z', minutes: 95 });
+  assert.notEqual(game.endedAt, game.playedUntil, 'the Finish press itself is not counted');
+  assert.equal(game.startedAt, '2026-01-01T19:00:00.000Z', 'game over does not move the start');
+  assert.deepEqual(publicGame(game).playTime, playTime(game));
+  assert.deepEqual(spectatorView(game).playTime, playTime(game));
+});
+
+test('undoing game over clears the end of play, and reopening is not counted as play', () => {
+  const game = makeGame(['Ana', 'Ben']);
+  const [ana, ben] = game.players;
+  act(game, { type: 'transfer', fromId: ana.id, toId: ben.id, amount: 10 });
+  const lastMove = game.transactions[0].at;
+  act(game, { type: 'end-game' });
+  assert.equal(game.playedUntil, lastMove);
+  act(game, { type: 'undo' });
+  assert.equal(game.playedUntil, null, 'undo restores the end of play');
+  assert.equal(playTime(game), null);
+  act(game, { type: 'end-game' });
+  assert.equal(game.playedUntil, lastMove, 'the undo entry and the earlier game over are not moves');
+});
+
+test('finishing before any move reports no play time', () => {
+  const game = makeGame(['Ana', 'Ben']);
+  act(game, { type: 'end-game' });
+  assert.equal(game.startedAt, null, 'game over does not start the clock');
+  assert.deepEqual(playTime(game), { startedAt: null, endedAt: null, minutes: 0 });
+});
+
+test('games saved before play time existed fall back to the oldest move in the ledger', () => {
+  const game = makeGame(['Ana', 'Ben']);
+  const [ana, ben] = game.players;
+  act(game, { type: 'transfer', fromId: ana.id, toId: ben.id, amount: 10 });
+  act(game, { type: 'transfer', fromId: ben.id, toId: ana.id, amount: 10 });
+  game.transactions[1].at = '2026-01-01T19:00:00.000Z';
+  game.transactions[0].at = '2026-01-01T19:20:00.000Z';
+  delete game.startedAt;
+  delete game.playedUntil;
+  act(game, { type: 'end-game' });
+  assert.equal(game.startedAt, '2026-01-01T19:00:00.000Z');
+  assert.equal(playTime(game).minutes, 20);
 });

@@ -441,6 +441,7 @@ test('MonoBank UI flows', { skip: chromium ? false : 'Playwright is not installe
     await page.waitForSelector('#results-dialog[open]');
     assert.equal(await page.isVisible('#end-dialog'), false);
     assert.match(await page.textContent('#results-title'), /Ben wins/);
+    assert.match(await page.textContent('#results-content .muted'), /^Played (under a minute|\d+ minutes?) \(.+–.+\) · \d+ transactions/, 'play time runs from the first to the last move');
     assert.match(await page.textContent('#ended-text'), /Game over: Ben wins/);
     await page.click('[data-undo-results]');
     await page.waitForSelector('#ended-banner', { state: 'hidden' });
