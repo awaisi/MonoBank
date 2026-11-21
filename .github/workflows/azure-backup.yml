@@ -1,0 +1,99 @@
+name: Back up game files
+
+# Daily point-in-time snapshots of the Azure Files share that holds every game (DATA_DIR=/data).
+# Snapshots are read-only copies kept next to the share; old ones are pruned after KEEP_DAYS.
+# Restore a game with the "Restore a game from a backup" workflow (see README "Backups").
+on:
+  schedule:
+    # 09:23 UTC: after US game nights end, when the app is quietest.
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: azure-backup
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-monobank-prod
+  SHARE_NAME: games
+  KEEP_DAYS: '14'
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    # The Azure OIDC trust (federated credential) is issued for this GitHub environment.
+    environment: production
+    steps:
+      - name: Check Azure deployment secrets
+        id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AZURE_CLIENT_ID is not set; there is nothing to back up yet."
+          fi
+
+      - name: Azure login (OIDC)
+        if: steps.gate.outputs.configured == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Find the storage account
+        if: steps.gate.outputs.configured == 'true'
+        id: storage
+        run: |
+          set -euo pipefail
+          account=$(az storage account list -g "$RESOURCE_GROUP" --query "[?starts_with(name, 'mbst')].name | [0]" -o tsv)
+          if [ -z "$account" ]; then
+            echo "::error::No MonoBank storage account (mbst...) found in $RESOURCE_GROUP."
+            exit 1
+          fi
+          echo "account=$account" >> "$GITHUB_OUTPUT"
+
+      # Management-plane commands only: the deploy identity has Contributor and needs no storage keys or extra roles.
+      - name: Snapshot the games share
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          ACCOUNT: ${{ steps.storage.outputs.account }}
+        run: |
+          set -euo pipefail
+          snapshot=$(az storage share-rm snapshot -g "$RESOURCE_GROUP" --storage-account "$ACCOUNT" --name "$SHARE_NAME" --query snapshotTime -o tsv)
+          if [ -z "$snapshot" ]; then
+            echo "::error::The snapshot was not created."
+            exit 1
+          fi
+          echo "Created snapshot $snapshot"
+          echo "### Game files backed up: snapshot \`$snapshot\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete snapshots older than ${{ env.KEEP_DAYS }} days
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          ACCOUNT: ${{ steps.storage.outputs.account }}
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d "-${KEEP_DAYS} days" +%Y-%m-%dT%H:%M:%S)
+          kept=0
+          removed=0
+          while read -r snapshot; do
+            [ -z "$snapshot" ] && continue
+            # Snapshot times are ISO 8601 in UTC, so text order is time order.
+            if [[ "$snapshot" < "$cutoff" ]]; then
+              az storage share-rm delete -g "$RESOURCE_GROUP" --storage-account "$ACCOUNT" --name "$SHARE_NAME" --snapshot "$snapshot" --yes --only-show-errors
+              echo "Deleted snapshot $snapshot"
+              removed=$((removed + 1))
+            else
+              kept=$((kept + 1))
+            fi
+          done < <(az storage share-rm list -g "$RESOURCE_GROUP" --storage-account "$ACCOUNT" --include-snapshot \
+                     --query "[?name=='$SHARE_NAME' && snapshotTime != null].snapshotTime" -o tsv)
+          echo "Kept $kept snapshot(s); deleted $removed older than $KEEP_DAYS days." | tee -a "$GITHUB_STEP_SUMMARY"

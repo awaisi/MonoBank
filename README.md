@@ -148,7 +148,7 @@ Games created through the API without `rules` use the defaults above, which matc
 
 Each game gets a random 16-character URL identifier. Anyone with that URL can make changes; there is no sign-in.
 
-**Games are durable.** In production every game is saved as a JSON file on an Azure Files share mounted at `/data`. The file is written atomically after every action and loaded again on first use after a restart. Deploys, restarts and platform maintenance no longer lose games in progress, and undo history survives too. Games are deleted **30 days after their last move**, or **7 days** after they finish. Games that have been idle for two hours are dropped from memory (they stay on disk and load again on the next visit), so long retention doesn't grow the server's memory.
+**Games are durable.** In production every game is saved as a JSON file on an Azure Files share mounted at `/data`. The file is written atomically after every action and loaded again on first use after a restart. Deploys, restarts and platform maintenance no longer lose games in progress, and undo history survives too. Games are deleted **30 days after their last move**, or **7 days** after they finish. Games that have been idle for two hours are dropped from memory (they stay on disk and load again on the next visit), so long retention doesn't grow the server's memory. Every game file is also **backed up daily** (see [Backups](#backups)).
 
 The server keeps a working copy of each active game in memory and writes it through to disk, so it must run as **exactly one instance**. Running several replicas would need a shared database first.
 
@@ -285,6 +285,25 @@ Every pull request to `main` runs steps 1–2 (no deploy), so problems show up b
 7. Polls `/health` on both URLs until the new revision reports `"storage": "file"`, then checks that the probe game survived the deploy. Either failure fails the run.
 
 The workflow can also be run manually from **Actions → Build, test, and deploy to Azure**.
+
+### Backups
+
+**Back up game files** (`.github/workflows/azure-backup.yml`) runs every day at 09:23 UTC, after US game nights, and can also be run by hand from **Actions**:
+
+1. It signs in to Azure with the same OIDC identity as the deploy (the `production` environment).
+2. It takes a **snapshot** of the `games` Azure Files share: a read-only, point-in-time copy of every game file, kept alongside the share.
+3. It deletes snapshots older than **14 days**.
+
+It uses only Azure Resource Manager commands, so the deploy identity's Contributor role is enough (no storage keys, no extra roles). Snapshots belong to the share: they protect against bad writes, bugs and accidental deletes, and the share's 7-day soft delete protects the share itself, but they are not an off-site copy of the storage account.
+
+**To restore one game,** run **Actions → Restore a game from a backup**:
+
+1. Run it with **action: list** to see the snapshot times (newest first).
+2. Run it again with **action: restore-game**, the **snapshot** time, the **game ID** (the 16 characters at the end of the game link) and **RESTORE** in the confirm box.
+
+The restore first takes a fresh snapshot (so the current state can be recovered too), checks the backed-up file is a valid game with that ID, and puts it back. It refreshes the game's last-change time so it gets a new 30-day window, recreates its spectator link, restarts the app so the restored copy is loaded, and checks the game opens. The game ID is masked in the logs. Restore while nobody is playing that game: a move made between the restore and the restart would be overwritten.
+
+**To restore many games or the whole share,** browse the snapshot in the Azure portal (storage account `mbst…` → **File shares** → `games` → **Snapshots**) and copy the files back, then restart the container app (**Revisions** → **Restart**).
 
 ## API overview
 
