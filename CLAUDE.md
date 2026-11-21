@@ -42,7 +42,7 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 | `docs/FEATURE_PLAN.md` | Prioritized backlog and shipped features. |
 | `Dockerfile` | Production image (Node 22 Alpine, runs as `node`). |
 | `infra/` | Bicep (Azure Container Apps), bootstrap and Cloudflare DNS scripts. |
-| `.github/workflows/` | `azure-deploy.yml` (every push to `main`), `azure-bootstrap.yml` (one-time, manual). |
+| `.github/workflows/` | `azure-deploy.yml` (every push to `main`), `azure-bootstrap.yml` (one-time, manual), `azure-backup.yml` (daily share snapshots, 14-day retention), `azure-restore.yml` (manual: list snapshots, restore one game). |
 
 ### Game model rules
 
@@ -106,6 +106,7 @@ Run `npm run check && npm test` before every commit, and `npm run e2e` for any U
 - Azure auth is OIDC (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`). The deploy identity has **Contributor only**: it cannot create role assignments, which is why ACR uses its admin user for pulls.
 - The Cloudflare `monobank` CNAME must stay **DNS only**; Azure renews the managed certificate through it.
 - `infra/bootstrap-azure.sh` / the bootstrap workflow are one-time setup and need the `BOOTSTRAP_*` secrets, which may have been deleted. Do not depend on them for routine deploys.
+- **Backups:** `azure-backup.yml` (daily at 09:23 UTC and on demand) snapshots the `games` share with `az storage share-rm snapshot` and prunes snapshots older than `KEEP_DAYS` (14). It uses management-plane commands only, because the deploy identity is Contributor. `azure-restore.yml` (manual) lists snapshots or restores one game: it validates the inputs (16-hex game ID, a snapshot time, the typed `RESTORE`), snapshots the current state first, downloads the file from the snapshot, checks it is a valid game with that ID, bumps `updatedAt` (so retention doesn't delete it again), uploads it, recreates `watch-<viewToken>.json`, restarts the latest revision (memory may hold an older copy; `store.flush()` only awaits in-flight writes, so a restart doesn't overwrite the restored file) and checks `GET /api/games/:id`. Both jobs use `environment: production`, because the OIDC federated credential is issued for that environment, and mask game IDs and keys in logs. Keep both workflows in sync with the storage layout (`<id>.json`, `watch-<token>.json`) if it changes.
 - **Admin token:** the optional `ADMIN_TOKEN` GitHub secret reaches the deploy step's `env` from `secrets.*` (masked), goes to Bicep as the `@secure()` `adminToken` parameter, and becomes the Container Apps secret `admin-token` referenced by the `ADMIN_TOKEN` env var. Empty means no secret and no admin page.
 - Never commit secrets. Never put secrets in Bicep parameters files, hard-coded workflow `env`, or logs; secrets come only from GitHub `secrets.*`.
 

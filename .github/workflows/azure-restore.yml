@@ -1,0 +1,141 @@
+name: Restore a game from a backup
+
+# Manual only. "list" shows the available snapshots; "restore-game" copies one game's file from a snapshot back
+# onto the live share, then restarts the app so it loads the restored copy. See README "Backups".
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [list, restore-game]
+        default: list
+      snapshot:
+        description: Snapshot time to restore from (copy it from the "list" run), e.g. 2026-11-21T09:23:05.0000000Z
+        required: false
+      game_id:
+        description: The 16-character game ID (the end of the game link)
+        required: false
+      confirm:
+        description: Type RESTORE to overwrite the game's current state
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: azure-backup
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-monobank-prod
+  APP_NAME: monobank-prod
+  SHARE_NAME: games
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check the inputs
+        env:
+          ACTION: ${{ inputs.action }}
+          SNAPSHOT: ${{ inputs.snapshot }}
+          GAME_ID: ${{ inputs.game_id }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          # The game ID gives full control of a game: keep it out of the logs.
+          [ -n "$GAME_ID" ] && echo "::add-mask::$GAME_ID"
+          if [ "$ACTION" = "restore-game" ]; then
+            [[ "$GAME_ID" =~ ^[a-f0-9]{16}$ ]] || { echo "::error::game_id must be the 16 lowercase hex characters at the end of the game link."; exit 1; }
+            [[ "$SNAPSHOT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$ ]] || { echo "::error::snapshot must be a snapshot time from the list run."; exit 1; }
+            [ "$CONFIRM" = "RESTORE" ] || { echo "::error::Type RESTORE in the confirm box to overwrite the game."; exit 1; }
+          fi
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Find the storage account
+        id: storage
+        run: |
+          set -euo pipefail
+          account=$(az storage account list -g "$RESOURCE_GROUP" --query "[?starts_with(name, 'mbst')].name | [0]" -o tsv)
+          [ -n "$account" ] || { echo "::error::No MonoBank storage account (mbst...) found in $RESOURCE_GROUP."; exit 1; }
+          echo "account=$account" >> "$GITHUB_OUTPUT"
+
+      - name: List snapshots
+        env:
+          ACCOUNT: ${{ steps.storage.outputs.account }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Snapshots of the games share (newest first)"
+            az storage share-rm list -g "$RESOURCE_GROUP" --storage-account "$ACCOUNT" --include-snapshot \
+              --query "reverse(sort([?name=='$SHARE_NAME' && snapshotTime != null].snapshotTime))" -o tsv | sed 's/^/- `/; s/$/`/'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore the game file
+        if: inputs.action == 'restore-game'
+        env:
+          ACCOUNT: ${{ steps.storage.outputs.account }}
+          SNAPSHOT: ${{ inputs.snapshot }}
+          GAME_ID: ${{ inputs.game_id }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$GAME_ID"
+          key=$(az storage account keys list -g "$RESOURCE_GROUP" -n "$ACCOUNT" --query "[0].value" -o tsv)
+          echo "::add-mask::$key"
+          files=(--account-name "$ACCOUNT" --account-key "$key" --share-name "$SHARE_NAME")
+          # 1. Keep today's state recoverable before overwriting anything.
+          before=$(az storage share-rm snapshot -g "$RESOURCE_GROUP" --storage-account "$ACCOUNT" --name "$SHARE_NAME" --query snapshotTime -o tsv)
+          echo "Saved the current state first as snapshot $before" | tee -a "$GITHUB_STEP_SUMMARY"
+          # 2. Fetch the game from the chosen snapshot and check it is the right, valid game file.
+          az storage file download "${files[@]}" --path "$GAME_ID.json" --snapshot "$SNAPSHOT" --dest restored.json --no-progress --only-show-errors > /dev/null
+          jq -e --arg id "$GAME_ID" '.id == $id and (.players | type == "array")' restored.json > /dev/null \
+            || { echo "::error::The file in that snapshot is not a valid MonoBank game with that ID."; exit 1; }
+          # 3. Give it a fresh retention window (games expire 30 days after their last change), then put it back.
+          jq '.updatedAt = (now | todate)' restored.json > game.json
+          az storage file upload "${files[@]}" --source game.json --path "$GAME_ID.json" --no-progress --only-show-errors > /dev/null
+          # 4. Recreate the spectator-link mapping, which the retention sweep may have removed.
+          token=$(jq -r '.viewToken // empty' game.json)
+          if [[ "$token" =~ ^[a-f0-9]{16}$ ]]; then
+            printf '{"id":"%s"}' "$GAME_ID" > watch.json
+            az storage file upload "${files[@]}" --source watch.json --path "watch-$token.json" --no-progress --only-show-errors > /dev/null
+          fi
+          echo "Restored the game from snapshot $SNAPSHOT (revision $(jq -r .revision game.json))." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The app keeps recently used games in memory; a restart makes it read the restored file.
+      - name: Restart the app
+        if: inputs.action == 'restore-game'
+        id: app
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes --only-show-errors
+          revision=$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" --query properties.latestRevisionName -o tsv)
+          az containerapp revision restart -n "$APP_NAME" -g "$RESOURCE_GROUP" --revision "$revision" --only-show-errors > /dev/null
+          fqdn=$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)
+          echo "fqdn=$fqdn" >> "$GITHUB_OUTPUT"
+
+      - name: Check the restored game opens
+        if: inputs.action == 'restore-game'
+        env:
+          FQDN: ${{ steps.app.outputs.fqdn }}
+          GAME_ID: ${{ inputs.game_id }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$GAME_ID"
+          for attempt in $(seq 1 30); do
+            if curl -fsS "https://$FQDN/api/games/$GAME_ID" -o game.json 2>/dev/null; then
+              echo "The restored game is live." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The app did not serve the restored game within 5 minutes."
+          exit 1
